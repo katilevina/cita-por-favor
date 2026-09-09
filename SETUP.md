@@ -66,6 +66,11 @@ Chrome не даст расширению запускать userscript'ы.
    (Cmd+S / Ctrl+S).
 
 ![Редактор Tampermonkey со вставленным скриптом](img/setup-07-editor.png)
+
+После сохранения скрипт появляется в списке Tampermonkey включённым —
+вкладка без звёздочки, переключатель активен.
+
+![Скрипт сохранён и включён](img/setup-07b-editor-saved.png)
 4. Откройте [страницу записи](https://icp.administracionelectronica.gob.es/icpplustieb/citar?p=8)
    на сайте администрации. Внизу справа появится панель Cita Por Favor.
 
