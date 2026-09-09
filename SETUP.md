@@ -40,6 +40,8 @@ Chrome не даст расширению запускать userscript'ы.
 
 ![Переключатель «Разрешить пользовательские скрипты» на странице расширения](img/setup-06-allow-scripts.png)
 
+![Редактор Tampermonkey](img/setup-07-editor.png)
+
 После включения предупреждение исчезает. Меню Tampermonkey выглядит так —
 пункт **«Создать новый скрипт…» (Create a new script…)** на месте, значит
 всё готово и можно идти дальше.
@@ -71,14 +73,14 @@ Chrome не даст расширению запускать userscript'ы.
 3. Вставьте скопированный на предыдущем шаге код и сохраните
    (Cmd+S / Ctrl+S).
 
-![Редактор Tampermonkey со вставленным скриптом](img/setup-07-editor.png)
+![Редактор Tampermonkey со вставленным скриптом](img/setup-08-editor-paste.png)
 
 После сохранения скрипт появляется в списке Tampermonkey включённым —
 вкладка без звёздочки, переключатель активен.
 
 ![Скрипт сохранён и включён](img/setup-07b-editor-saved.png)
 
-1. Откройте [страницу записи](https://icp.administracionelectronica.gob.es/icpplustieb/citar?p=8)
+4. Откройте [страницу записи](https://icp.administracionelectronica.gob.es/icpplustieb/citar?p=8)
    на сайте администрации. Сверху справа появится панель Cita Por Favor.
 
 ![Страница записи с панелью Cita Por Favor](img/setup-10-panel-appeared.png)
