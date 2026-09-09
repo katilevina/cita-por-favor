@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.20
+// @version      9.21
 // @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или конкретный офис из списка на панели): вкладка сама проверяет наличие сит на toma de huellas и/или expedición de tarjetas, при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
@@ -26,11 +26,11 @@
   // В коде их НЕТ: заполняются один раз через кнопку «👤 Изменить мои данные» на панели
   // и хранятся в хранилище Tampermonkey (переживают обновления скрипта).
   const DATA_DEFAULTS = {
-    docType: 'NIE',             // 'NIE' или 'PASSPORT'
+    docType: 'NIE',             // NIE или PASSPORT (выбор в панели)
     docNumber: '',
     fullName: '',
     birthYear: '',
-    country: 'RUSIA',           // точное название из списка на сайте
+    country: '',                // точное название из списка на сайте
     phone: '',
     email: '',
     tramites: ['huellas'],      // какие услуги проверять (ключи из TRAMITES)
@@ -1136,9 +1136,27 @@
       form.appendChild(inp);
       return inp;
     }
+    // v9.21: тип документа — выпадающий список, чтобы PASSPORT был виден как
+    // полноценный вариант, а не «знаешь — введёшь»
+    function mkSelect(form, labelText, options, value) {
+      const lab = document.createElement('div');
+      lab.style.cssText = 'margin-top:6px;font-size:11px;color:#fff';
+      lab.textContent = labelText;
+      form.appendChild(lab);
+      const sel = document.createElement('select');
+      for (const opt of options) {
+        const o = document.createElement('option');
+        o.value = opt; o.textContent = opt;
+        if (opt === value) o.selected = true;
+        sel.appendChild(o);
+      }
+      sel.style.cssText = inputCss;
+      form.appendChild(sel);
+      return sel;
+    }
     const fields = [
-      ['docType', 'Документ: NIE или PASSPORT'],
-      ['docNumber', 'Номер документа (NIE)'],
+      ['docType', 'Документ'],
+      ['docNumber', 'Номер документа'],
       ['fullName', 'Имя и фамилия как в документе'],
       ['birthYear', 'Год рождения'],
       ['country', 'Страна (как в списке сайта)'],
@@ -1147,7 +1165,10 @@
     ];
     const inputs = {};
     for (const [key, label] of fields) {
-      inputs[key] = mkField(settingsForm, label, DATA[key] || ''); // v9.2: подпись над полем
+      inputs[key] = key === 'docType'
+        ? mkSelect(settingsForm, label, ['NIE', 'PASSPORT'],
+            (DATA.docType || 'NIE') === 'PASSPORT' ? 'PASSPORT' : 'NIE')
+        : mkField(settingsForm, label, DATA[key] || ''); // v9.2: подпись над полем
     }
     const saveDataBtn = mkBtn('Сохранить данные', '#27ae60');
     // v9.3: активна, только когда хоть одно поле разошлось с сохранёнными
@@ -1655,6 +1676,18 @@
     hint.style.cssText = 'margin-top:7px;font-size:11px;color:#999';
     hint.textContent = 'Слоты/телефон заполнит само. SMS-код и Confirmar — за тобой. v' + SCRIPT_VER;
     box.appendChild(hint);
+
+    // Небольшая постоянная ссылка: не собирает логи, не отправляет данные и
+    // не влияет на проверку. В Telegram пользователь приходит только по клику.
+    const supportLink = document.createElement('a');
+    supportLink.href = 'https://t.me/edlevina';
+    supportLink.target = '_blank';
+    supportLink.rel = 'noopener noreferrer';
+    supportLink.textContent = 'Написать в поддержку';
+    supportLink.style.cssText =
+      'display:block;margin-top:4px;padding:3px 6px;border:1px solid #555;border-radius:5px;' +
+      'color:#ddd;background:#1b1b1b;text-align:center;text-decoration:none;font-size:11px;line-height:1.25';
+    box.appendChild(supportLink);
     document.body.appendChild(box);
     renderStats();
   }
