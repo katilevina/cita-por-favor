@@ -74,6 +74,8 @@ Chrome не даст расширению запускать userscript'ы.
 4. Откройте [страницу записи](https://icp.administracionelectronica.gob.es/icpplustieb/citar?p=8)
    на сайте администрации. Внизу справа появится панель Cita Por Favor.
 
+![Страница записи с панелью Cita Por Favor](img/setup-10-panel-appeared.png)
+
 ## 4. Настройте проверку
 
 В панели выберите услуги, офис и способ входа. Личные данные сохраняются в
