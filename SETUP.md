@@ -78,7 +78,7 @@ Chrome не даст расширению запускать userscript'ы.
 
 ![Скрипт сохранён и включён](img/setup-07b-editor-saved.png)
 4. Откройте [страницу записи](https://icp.administracionelectronica.gob.es/icpplustieb/citar?p=8)
-   на сайте администрации. Внизу справа появится панель Cita Por Favor.
+   на сайте администрации. Сверху справа появится панель Cita Por Favor.
 
 ![Страница записи с панелью Cita Por Favor](img/setup-10-panel-appeared.png)
 
