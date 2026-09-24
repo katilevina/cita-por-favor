@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.21
-// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или конкретный офис из списка на панели): вкладка сама проверяет наличие сит на toma de huellas и/или expedición de tarjetas, при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
+// @version      9.22
+// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas и/или expedición de tarjetas, при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
 // @match        https://*.clave.gob.es/*
@@ -34,7 +34,9 @@
     phone: '',
     email: '',
     tramites: ['huellas'],      // какие услуги проверять (ключи из TRAMITES)
-    office: '',                 // какой офис проверять ('' = вся провинция; ключи из OFFICES)
+    offices: [],                // какие офисы брать (ключи из OFFICES; [] = вся провинция, любой)
+    officeAny: false,           // ситы есть, но выбранных офисов нет — брать любой
+    office: '',                 // легаси-поле для отката на ≤9.21: ключ при ровно одном офисе, иначе ''
     useClave: false,            // вход через Cl@ve: скрипт зовёт человека авторизоваться
     claveCert: false,           // Cl@ve через сертификат (eIdentifier) — авто-клик плитки
   };
@@ -47,15 +49,24 @@
   let DATA = { ...DATA_DEFAULTS };
   try { DATA = Object.assign({}, DATA_DEFAULTS, JSON.parse(store.get('ck_data', '{}'))); } catch (e) {}
   if (!DATA.useClave) DATA.claveCert = false; // сертификат существует только внутри Cl@ve
+  // разовая миграция 9.21 → 9.22: закреплённый офис переезжает в массив
+  if (!Array.isArray(DATA.offices)) DATA.offices = [];
+  if (DATA.office && !DATA.offices.includes(DATA.office)) DATA.offices = [DATA.office];
+  // сохранение с поддержкой легаси-поля office: откат на 9.21 не теряет выбор
+  function persistData() {
+    DATA.office = DATA.offices.length === 1 ? DATA.offices[0] : '';
+    store.set('ck_data', JSON.stringify(DATA));
+  }
   const dataReady = () => !!(DATA.docNumber && DATA.fullName && DATA.phone && DATA.email);
 
   // Офисы провинции Барселона — список снят с сайта citar?p=8 (02.09.2026):
-  // 24 комиссариа провинции + 4 офиса собственно Барселоны. По умолчанию ''
-  // («Cualquier oficina») — слоты всей провинции, прежнее поведение.
-  // key — ключ поиска опции в #sede/#idSede (findOption ищет подстроку в
-  // верхнем регистре). Ключи подобраны так, чтобы не совпасть с улицей чужого
-  // офиса: у Руби улица называется TERRASSA, поэтому Terrassa ищем как
-  // «COMISARIA TERRASSA», Vic — «COMISARIA VIC». short — метка для журнала
+  // 24 комиссариа провинции + 4 офиса собственно Барселоны. По умолчанию ничего
+  // не выбрано («Cualquier oficina») — слоты всей провинции, прежнее поведение.
+  // key — ключ поиска опции в #sede/#idSede (findOption/pickOffice ищут
+  // подстроку в верхнем регистре без диакритиков). Ключи подобраны так, чтобы
+  // не совпасть с улицей чужого офиса: у Руби улица называется TERRASSA,
+  // поэтому Terrassa ищем как «COMISARIA TERRASSA», Vic — «COMISARIA VIC».
+  // short — метка для журнала
   // (бюджет строки ~40 символов, см. CLAUDE.md).
   const OFFICES = [
     { key: '', short: '', label: 'Вся провинция (Cualquier oficina)' },
@@ -88,8 +99,43 @@
     { key: 'PSJ', short: 'BCN-PSJ', label: 'Barcelona · Passeig Sant Joan 189' },
     { key: 'RAMBLA GUIPUSCOA', short: 'BCN-RAMBLA', label: 'Barcelona · Rambla Guipúscoa 74' },
   ];
-  function currentOffice() {
-    return OFFICES.find((o) => o.key === DATA.office) || OFFICES[0];
+  // v9.22: выбранные офисы — галочки на панели. Пусто = вся провинция.
+  // Ровно один — точечный поиск по нему; два и больше — ищем всю провинцию
+  // (Cualquier), а на экране офисов берём только выбранные: чужие = «сит нет».
+  function selectedOffices() {
+    return OFFICES.filter((o) => o.key && DATA.offices.includes(o.key));
+  }
+  // галка «брать любой» видна и действует только при 2+ офисах: при всей
+  // провинции любой офис берём и так, при одном «любой» противоречит смыслу
+  // точечного режима. Скрытая галка выключена ПО ЭФФЕКТУ — включённое
+  // положение не срабатывает незаметно; само DATA.officeAny не сбрасываем,
+  // галка вернётся в прежнем положении, когда офисов снова станет 2+.
+  const officeAnyEffective = () => DATA.officeAny && selectedOffices().length >= 2;
+  // короткая подпись для журнала (бюджет строки ~40 символов, см. выше)
+  function officesShort() {
+    const sel = selectedOffices();
+    if (!sel.length) return 'провинция';
+    return sel.length === 1 ? sel[0].short : 'офисы ' + sel.length;
+  }
+  // режим поиска — одинаково формулируем в сводке секции, подсказке и статусе,
+  // чтобы было видно, ЧТО именно меняет количество галочек
+  function officesModeShort() { // сводка секции (видна и свёрнутой)
+    const sel = selectedOffices();
+    if (!sel.length) return 'Вся провинция — берём любой офис';
+    if (sel.length === 1) return sel[0].short + ' — ищем только этот офис';
+    return sel.length + ' офисов — ищем всю провинцию, берём свои';
+  }
+  function officesModeHint() { // подсказка внутри списка
+    const sel = selectedOffices();
+    if (!sel.length) return 'Поиск по всей провинции; на экране офисов берём любой.';
+    if (sel.length === 1) return 'Поиск только по этому офису.';
+    return 'Каждый заход ищет всю провинцию (Cualquier oficina), бронь — только выбранные офисы; чужие = «сит нет».';
+  }
+  function officesModeStatus() { // статус после смены выбора
+    const sel = selectedOffices();
+    if (!sel.length) return 'Офисы: вся провинция — берём любой; со следующего захода';
+    if (sel.length === 1) return 'Офисы: ' + sel[0].short + ' — только его; со следующего захода';
+    return 'Офисы: ' + sel.length + ' шт — ищу всю провинцию, беру свои; со следующего захода';
   }
   // Услуги, которые умеем ловить. Галочки — в «🔎 Настройки поиска».
   // Если отмечено несколько, чекер чередует их по кругу (нагрузка не растёт).
@@ -133,20 +179,22 @@
     SITE_MAINTENANCE:  ['🛠️', 'обслуживание сайта'],
     TRAMITE_MISSING:   ['⚠️', 'услуга недоступна'],
     OFFICE_MISSING:    ['⚠️', 'офиса нет'],
+    OFFICE_NOTOURS:    ['·', 'ситы не в моих'], // строка ≤40: «· ситы не в моих: 3 чужих»
     SESSION_LOOP:      ['⚠️', 'сессия не восстанавливается'],
   };
 
   // короткая сводка активных настроек — для журнала и панели.
-  // v9.2: офис показываем только в журнале (withOffice) — на панели офис и так
-  // выбран селектором выше; пресет ритма тоже не выносим сюда — он виден в
+  // v9.2: офис показываем только в журнале (withOffice) — на панели офисы и так
+  // видны в секции выше; пресет ритма тоже не выносим сюда — он виден в
   // списке пресетов «Настроить ритм проверки», к ритму и относится.
   function settingsSummary(withOffice = true) { // журнал — с офисом; панель просит без
     const parts = [(DATA.tramites || []).join('+') || 'huellas'];
     if (DATA.useClave) parts.push(DATA.claveCert ? 'Cl@ve-серт' : 'Cl@ve-моб');
     else parts.push('аноним');
     if (withOffice) {
-      const office = currentOffice();
-      if (office.key) parts.push('офис ' + office.short);
+      const sel = selectedOffices();
+      if (sel.length === 1) parts.push('офис ' + sel[0].short);
+      else if (sel.length > 1) parts.push('офисы ' + sel.length);
     }
     return parts.join(' · ');
   }
@@ -931,30 +979,98 @@
       return d;
     }
 
-    // ---- секция «Офис, который проверяем» ----
-    box.appendChild(sectionTitle('Офис, который проверяем'));
+    // ---- секция «Офисы, которые проверяем» ----
+    box.appendChild(sectionTitle('Офисы, которые проверяем'));
 
-    // Офис на главной панели (переехал из «Настроек поиска»): выбор применяется
-    // к СЛЕДУЮЩЕЙ проверке — уже открытую форму сайта он не меняет
-    const mainOfficeSel = document.createElement('select');
-    mainOfficeSel.style.cssText = 'width:100%;margin-top:4px;padding:5px 6px;border:1px solid #444;' +
-      'border-radius:5px;background:#222;color:#fff;font:12px system-ui,sans-serif;box-sizing:border-box';
-    for (const o of OFFICES) {
-      const op = document.createElement('option');
-      op.value = o.key;
-      op.textContent = o.label;
-      mainOfficeSel.appendChild(op);
+    // v9.22: вместо селекта — галочки (просьба тестера: искать Cualquier,
+    // а бронировать только свои). Режим поиска зависит от числа отмеченных:
+    // 0 — вся провинция (любой офис), 1 — точечный поиск, 2+ — вся провинция
+    // с фильтром на экране офисов. Режим виден в сводке секции (видна всегда)
+    // и в подсказке внутри списка. Выбор применяется к СЛЕДУЮЩЕЙ проверке —
+    // уже открытую форму сайта он не меняет.
+    const OFFICE_ROWS = OFFICES.filter((o) => o.key);
+    const officeDetails = document.createElement('details');
+    officeDetails.style.cssText = 'margin-top:4px;font:12px system-ui,sans-serif';
+    const officeSummary = document.createElement('summary');
+    officeSummary.style.cssText = 'cursor:pointer;padding:5px 6px;border:1px solid #444;' +
+      'border-radius:5px;background:#222;color:#fff;user-select:none';
+    officeSummary.textContent = officesModeShort();
+    officeDetails.appendChild(officeSummary);
+
+    const officeToggles = document.createElement('div');
+    officeToggles.style.cssText = 'margin-top:6px;font-size:11px';
+    const allLinkCss = 'color:#6db3f2;cursor:pointer;text-decoration:underline;margin-right:12px';
+    const officeAllLink = document.createElement('span');
+    officeAllLink.textContent = 'Выбрать все';
+    officeAllLink.style.cssText = allLinkCss;
+    const officeNoneLink = document.createElement('span');
+    officeNoneLink.textContent = 'Снять все';
+    officeNoneLink.style.cssText = allLinkCss;
+    officeToggles.appendChild(officeAllLink);
+    officeToggles.appendChild(officeNoneLink);
+    officeDetails.appendChild(officeToggles);
+
+    const officeList = document.createElement('div');
+    officeList.style.cssText = 'margin-top:4px;max-height:236px;overflow-y:auto;' +
+      'border:1px solid #333;border-radius:5px;padding:3px 6px;background:#181818';
+    const officeChecks = {};
+    for (const o of OFFICE_ROWS) {
+      const row = document.createElement('label');
+      row.style.cssText = checkRowCss + ';color:#fff';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = DATA.offices.includes(o.key);
+      cb.style.cssText = 'margin:1px 0 0';
+      officeChecks[o.key] = cb;
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(o.label));
+      officeList.appendChild(row);
     }
-    mainOfficeSel.value = currentOffice().key;
-    mainOfficeSel.onchange = () => {
-      DATA.office = mainOfficeSel.value;
-      store.set('ck_data', JSON.stringify(DATA));
+    officeDetails.appendChild(officeList);
+
+    const officeHint = document.createElement('div');
+    officeHint.style.cssText = 'margin-top:4px;font-size:10px;line-height:1.3;color:#bbb';
+    officeHint.textContent = officesModeHint();
+    officeDetails.appendChild(officeHint);
+
+    // галка «брать любой»: видна только при 2+ отмеченных (см.
+    // officeAnyEffective) — в остальных режимах она не нужна и не действует
+    const anyRow = document.createElement('label');
+    anyRow.style.cssText = checkRowCss + ';margin-top:6px;color:#fff';
+    const anyCb = document.createElement('input');
+    anyCb.type = 'checkbox';
+    anyCb.checked = !!DATA.officeAny;
+    anyCb.style.cssText = 'margin:1px 0 0';
+    anyRow.appendChild(anyCb);
+    anyRow.appendChild(document.createTextNode('Если выбранных офисов нет — брать любой'));
+    officeDetails.appendChild(anyRow);
+    function renderAnyRow() {
+      anyRow.style.display = selectedOffices().length >= 2 ? 'flex' : 'none';
+    }
+    renderAnyRow();
+
+    function applyOfficeSelection() {
+      DATA.offices = OFFICE_ROWS.filter((o) => officeChecks[o.key].checked).map((o) => o.key);
+      DATA.officeAny = anyCb.checked;
+      persistData();
       SS.del('tramIdx'); // начать чередование услуг заново
-      const o = currentOffice();
-      status('🏥 Офис: ' + (o.key ? o.label : 'вся провинция') + ' — проверю со следующего захода', '#7CFC00');
+      officeSummary.textContent = officesModeShort();
+      officeHint.textContent = officesModeHint();
+      renderAnyRow();
+      status('🏥 ' + officesModeStatus(), '#7CFC00');
       renderStats();
+    }
+    for (const o of OFFICE_ROWS) officeChecks[o.key].addEventListener('change', applyOfficeSelection);
+    anyCb.addEventListener('change', applyOfficeSelection);
+    officeAllLink.onclick = () => {
+      for (const o of OFFICE_ROWS) officeChecks[o.key].checked = true;
+      applyOfficeSelection();
     };
-    box.appendChild(mainOfficeSel);
+    officeNoneLink.onclick = () => {
+      for (const o of OFFICE_ROWS) officeChecks[o.key].checked = false;
+      applyOfficeSelection();
+    };
+    box.appendChild(officeDetails);
 
     // «Проверить сейчас» (v9.0 — имя снова честное): ровно ОДИН цикл до
     // вердикта, цикл НЕ включает — даже если стоит галочка форсажа (v9.3:
@@ -1714,17 +1830,39 @@
     lastAction[name] = Date.now();
     return false;
   }
+  // нормализация для сопоставления офисов: сайт пишет имена с испанскими
+  // диакритиками (Rubí, Mataró), ключи OFFICES — без них (RUBI, MATARO);
+  // сравниваем без надстрочных знаков — «RUBÍ» совпадает с «RUBI»
+  const deaccent = (s) => (s || '').toUpperCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
   function findOption(sel, keywords) {
     if (!sel) return null;
     for (const o of sel.options) {
-      const up = (o.text || '').toUpperCase();
-      for (const kw of keywords) if (up.includes(kw.toUpperCase())) return o;
+      const up = deaccent(o.text);
+      for (const kw of keywords) if (up.includes(deaccent(kw))) return o;
     }
     return null;
   }
   function selectOption(sel, opt) {
     sel.value = opt.value;
     sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  // ШАГ 3.5: какой из предложенных сайтом офисов брать. Чистая функция —
+  // проверяется подстановкой списков без реальных сит. Правила:
+  // 1) первый предложенный из выбранных (панель «Офисы, которые проверяем»);
+  // 2) выбранных нет, но ничего не выбрано (провинция) или разрешён «любой» —
+  //    берём второй офис (за первый конкурируют все), иначе первый;
+  // 3) выбранных нет, «любой» не разрешён — null: чужие офисы = «сит нет».
+  function pickOffice(offered, selKeys, allowAny) {
+    for (const o of offered) {
+      const up = deaccent(o.text);
+      for (const k of selKeys) if (up.includes(deaccent(k))) {
+        return { opt: o, kind: 'выбранный', mine: true };
+      }
+    }
+    if (selKeys.length && !allowAny) return null;
+    const any = offered[1] || offered[0] || null;
+    return any ? { opt: any, kind: offered[1] ? 'второй' : 'первый', mine: false } : null;
   }
   function findTramite(keyword) {
     for (const s of document.querySelectorAll('select[id^="tramiteGrupo"]')) {
@@ -2102,14 +2240,18 @@
         if (driving()) checkerStop('⚠️ Первый экран зациклился — проверка остановлена', 'unknown');
         return;
       }
-      const office = currentOffice();
-      const wantOffice = findOption(sede, office.key ? [office.key] : ['CUALQUIER']);
+      // v9.22: ровно один выбранный офис — ищем точечно (вердикт «нет сит»
+      // сайт отдаёт сразу после формы); пусто (провинция) или 2+ — ищем
+      // CUALQUIER: один заход покрывает все выбранные офисы
+      const selOffices = selectedOffices();
+      const wantKey = selOffices.length === 1 ? selOffices[0].key : 'CUALQUIER';
+      const wantOffice = findOption(sede, [wantKey]);
       if (!wantOffice) {
-        softFail('OFFICE_MISSING', office.short || 'CUALQUIER');
+        softFail('OFFICE_MISSING', selOffices.length === 1 ? selOffices[0].short : 'CUALQUIER');
         return;
       }
       if (sede.value !== wantOffice.value) {
-        status('Выбираю офис: ' + (office.key ? office.label : 'Cualquier oficina'));
+        status('Выбираю офис: ' + (selOffices.length === 1 ? selOffices[0].label : 'Cualquier oficina'));
         selectOption(sede, wantOffice);
         return; // следующий тик проверит список услуг
       }
@@ -2204,16 +2346,16 @@
         // ↩ перед услугой = проверка началась кнопкой Volver (та же сессия);
         // ↪ = хотели через Volver, но кнопки не нашли или клик не сработал
         // (перезаход — в статистику гипотезы не идёт).
-        // v9.5: после глубины пишем и офис проверки (панель → currentOffice());
+        // v9.5: после глубины пишем и офис проверки (панель → officesShort());
         // «провинция» = Cualquier oficina. Анализ «какие офисы давали сит нет»
         // теперь читается из каждой записи, а не только из «старт» (заметила
         // Екатерина, 04.09: в «старт» офис есть только с 03.09 и только один
-        // на серию).
+        // на серию). v9.22: выбранных офисов может быть несколько — тогда
+        // пишем «офисы N» (config виден в записи «старт»).
         const numM = document.body.innerText.match(/(\d{4})\s+Cod\.?\s*Oper/i);
         const scr = document.querySelector('#txtIdCitado') ? 'форма' : 'Salir';
         const depth = SS.get('deepFill') ? 'после данных' : 'сразу'; // v9.5
-        const co = currentOffice(); // v9.5: офис этой проверки
-        const where = co.key ? co.short : 'провинция';
+        const where = officesShort(); // v9.5→9.22: офис/офисы этой проверки
         const via = SS.get('viaVolver') ? '↩' : (SS.get('volverMiss') ? '↪' : '');
         SS.del('viaVolver'); SS.del('volverMiss');
         recordHit(); // учли обращение к сайту в скользящем окне лимита
@@ -2406,23 +2548,56 @@
     const idSede = document.querySelector('select#idSede');
     if (idSede) {
       noteStep('office2');
-      markFound();
       if (!recently('office2', 5000)) {
-        // Берём ВТОРОЙ офис из списка, а не первый: за первый конкурируют все,
-        // кто ловит ситы, — шанс, что слот уже занят, выше. Второго нет (список
-        // из одного офиса) — берём первый. Опции без value — это placeholder
-        // вроде «Selecciona oficina», их пропускаем.
-        // Исключение: закреплён конкретный офис (список на главной панели) и
-        // сайт его предложил — берём именно его.
+        // Опции без value — placeholder вроде «Selecciona oficina», пропускаем.
+        // v9.22: сначала фильтр выбранных офисов (панель «Офисы, которые
+        // проверяем»), и только потом markFound:
+        //  - среди предложенных есть наш — markFound и берём его;
+        //  - наших нет, но включена галка «брать любой» (или выбрана вся
+        //    провинция) — markFound и берём ВТОРОЙ офис: за первый конкурируют
+        //    все, кто ловит ситы; второго нет — первый;
+        //  - наших нет, «любой» запрещён — чужие = «сит нет»: БЕЗ markFound,
+        //    снимка и зова завершаем заход как обычный отрицательный вердикт,
+        //    цикл продолжается (блок зеркалит «no hay citas» ниже).
         const opts = [...idSede.options].filter((o) => o.value);
-        const chosen = currentOffice().key ? findOption(idSede, [currentOffice().key]) : null;
-        const opt = chosen || opts[1] || opts[0];
-        if (opt) {
-          status('🎉 Ситы есть! Беру ' + (chosen ? 'выбранный' : opts[1] ? 'второй' : 'первый') +
+        if (opts.length) {
+          const selKeys = selectedOffices().map((o) => o.key);
+          const pick = pickOffice(opts, selKeys, officeAnyEffective());
+          if (!pick) {
+            if (stepMode()) {
+              status('⏸️ Ситы есть, но не в моих офисах — шаг не продолжаю', '#ffd27f');
+              return;
+            }
+            status('⏸️ Ситы есть, но не в моих офисах (предложено ' + opts.length +
+              ') — продолжаю проверку', '#ffd27f');
+            recordResult('OFFICE_NOTOURS', opts.length + ' чужих');
+            recordHit();
+            SS.del('deepFill'); // вердикт записан — глубина израсходована
+            SS.del('clavePending'); // проверка завершена — флаг Cl@ve не переживает её
+            SS.del('viaVolver'); SS.del('volverMiss');
+            nextTramite(); // следующий цикл — следующая отмеченная услуга
+            if (rhythmOn() || boostRun()) {
+              scheduleNext(jitteredDelayMs(),
+                'Не в моих офисах (' + currentTramite().key + ')');
+            } else {
+              // разовая проверка дошла до вердикта — машина замолкает
+              SS.del('once');
+              waiting = false; stopped = true;
+              status('✅ Разовая проверка завершена: ситы есть, но не в моих офисах', '#7CFC00');
+              renderState();
+            }
+            return;
+          }
+          markFound();
+          status('🎉 Ситы есть! Беру ' + (pick.mine ? 'выбранный' :
+            pick.kind + (selKeys.length ? ' (не из выбранных)' : '')) +
             ' офис из ' + opts.length + '…', '#7CFC00');
-          selectOption(idSede, opt);
+          selectOption(idSede, pick.opt);
+          setTimeout(() => { if (!stepMode()) clickBtn('#btnSiguiente', 'siguiente'); }, 700);
         }
-        setTimeout(() => { if (!stepMode()) clickBtn('#btnSiguiente', 'siguiente'); }, 700);
+        // opts пуст: список офисов ещё не загрузился — не вердиктим и не кликаем
+        // вслепую (в 9.21 и раньше сюда жался Siguiente по placeholder), ждём следующие
+        // тики; зависание разберёт watchdog
       }
       return;
     }
