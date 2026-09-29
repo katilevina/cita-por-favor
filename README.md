@@ -1,7 +1,8 @@
 # Cita Por Favor
 
-Локальный помощник для проверки доступности cita на toma de huellas и
-expedición de tarjetas в провинции Barcelona. Он работает в вашем обычном
+Локальный помощник для проверки доступности cita на toma de huellas,
+expedición de tarjetas и recogida de tarjeta (получение готовой TIE)
+в провинции Barcelona. Он работает в вашем обычном
 Chrome через Tampermonkey: проверяет наличие свободных записей в выбранном
 вами ритме и сообщает о находке. Финальные действия всегда остаются за вами.
 

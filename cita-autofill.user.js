@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Cita Por Favor — huellas + tarjetas (Barcelona, вся провинция)
+// @name         Cita Por Favor — huellas + tarjetas + recogida TIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.22
-// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas и/или expedición de tarjetas, при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
+// @version      9.23
+// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas и recogida de tarjeta (получение готовой TIE), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
 // @match        https://*.clave.gob.es/*
@@ -146,6 +146,12 @@
     { key: 'tarjetas',
       label: 'EXPEDICIÓN DE TARJETAS (Dirección General de Gestión Migratoria)',
       keyword: 'GESTIÓN MIGRATORIA' },
+    // v9.23 (контриб тестера, 24.09): в некоторых отделениях на ПОЛУЧЕНИЕ
+    // готовой карточки тоже нужна сита — ловим и её. Ключ 'RECOGIDA DE TARJETA'
+    // совпадает и с «TARJETA», и с «TARJETAS», с huellas/tarjetas не пересекается.
+    { key: 'recogida',
+      label: 'RECOGIDA DE TARJETA (TIE) — получение готовой карты',
+      keyword: 'RECOGIDA DE TARJETA' },
   ];
   function activeTramites() {
     const sel = TRAMITES.filter((t) => (DATA.tramites || []).includes(t.key));
@@ -167,6 +173,7 @@
     SLOTS_FOUND:       ['🎉', 'СИТЫ найдены'],
     SLOTS_CAPTCHA:     ['🎉', 'СИТЫ — введи капчу'],
     SLOTS_FOUND_FINAL: ['🎉', 'СИТЫ — финал, SMS+Confirmar'],
+    SLOTS_CONFIRMED:   ['✅', 'СИТА ПОДТВЕРЖДЕНА'], // после Confirmar, экран успеха
     CONFIG:            ['⚙️', 'старт'],
     RESUMED:           ['🔄', 'ожил после заморозки'],
     CLAVE_NEEDED:      ['🔐', 'Cl@ve: нужен вход'],
@@ -406,7 +413,7 @@
   // служебные записи журнала — НЕ проверки, в счётчик «сегодня» не идут
   // (SLOTS_CAPTCHA/FINAL — продолжение уже посчитанной находки, не новая проверка)
   const META_STATES = ['CONFIG', 'RESUMED', 'CLAVE_NEEDED', 'CLAVE_AUTH_WAIT',
-    'SLOTS_CAPTCHA', 'SLOTS_FOUND_FINAL', 'SITE_MAINTENANCE'];
+    'SLOTS_CAPTCHA', 'SLOTS_FOUND_FINAL', 'SLOTS_CONFIRMED', 'SITE_MAINTENANCE'];
   function todayCount() {
     const day = new Date().toDateString();
     return readLog().filter((e) =>
@@ -715,6 +722,10 @@
     SS.del('clavePending'); // не тащить флаг Cl@ve в выключенное состояние (v7.27)
     localStorage.removeItem('ck_claveResume'); // не воскрешать проверку после ручного стопа
     waiting = false; stopped = true;
+    stopAlertLoop(); // v9.23: «вкладка должна стать тихой» — глушим зов и отсюда,
+                     // а не только из кнопки «Остановить проверку» (эпизод 29.09:
+                     // после UNKNOWN-остановки кнопка уже предлагала «Запустить»,
+                     // и выключить голосовой луп было нечем)
     status(reason, '#ff8888');
     renderStats();
     sendBeat(); // сказать сторожу «я выключен осознанно», чтобы он не звал зря
@@ -1865,9 +1876,11 @@
     return any ? { opt: any, kind: offered[1] ? 'второй' : 'первый', mine: false } : null;
   }
   function findTramite(keyword) {
+    // v9.23: без диакритиков — как у офисов (findOption): услуга tarjetas
+    // не должна зависеть от того, написало ли сайт «GESTIÓN» с ударением
     for (const s of document.querySelectorAll('select[id^="tramiteGrupo"]')) {
       for (const o of s.options) {
-        if ((o.text || '').toUpperCase().includes(keyword.toUpperCase())) return { sel: s, opt: o };
+        if (deaccent(o.text).includes(deaccent(keyword))) return { sel: s, opt: o };
       }
     }
     return null;
@@ -2186,6 +2199,27 @@
         location.replace(SS.get('startUrl') || DEFAULT_START);
       }
       return;
+    }
+
+    // ЭКРАН ПОСЛЕ ФИНАЛА — «CITA CONFIRMADA»: сита подтверждена, бронь
+    // завершена (впервые дошли до него 29.09 на бете recogida — раньше
+    // watchdog считал его «незнакомой страницей» и зовал голосом на помощь).
+    // Ничего не кликаем: justificante с номером записи остаётся человеку.
+    if (earlyText.includes('cita confirmada')) {
+      noteStep('confirmada');
+      if (foundMode() || driving()) {
+        if (!recently('confirmada', 30000)) {
+          stopAlertLoop();
+          recordResult('SLOTS_CONFIRMED', currentTramite().key); // строка 41 симв. — в бюджете ~40
+          SS.del('found'); SS.del('on'); SS.del('once'); SS.del('boostRun');
+          SS.del('clavePending');
+          waiting = false; stopped = true;
+          sendBeat(); // сторожу: выключились осознанно, не зови
+          status('✅ СИТА ПОДТВЕРЖДЕНА — всё готово! Номер записи (justificante) на странице', '#7CFC00');
+          renderState();
+        }
+      }
+      return; // проверка не идёт — страницу старого подтверждения не трогаем
     }
 
     // Страница выбора провинции («PROVINCIAS DISPONIBLES», index.html). Сюда
