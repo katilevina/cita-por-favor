@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas + recogida TIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.23
+// @version      9.23.1
 // @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas и recogida de tarjeta (получение готовой TIE), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
@@ -152,6 +152,13 @@
     { key: 'recogida',
       label: 'RECOGIDA DE TARJETA (TIE) — получение готовой карты',
       keyword: 'RECOGIDA DE TARJETA' },
+    // v9.23.1 (просьба пользовательницы, 30.09): «POLICIA — ASIGNACIÓN NIE» —
+    // первичное назначение номера NIE. Ключ 'ASIGNACION NIE' с существующими
+    // не пересекается. Нюанс данных: NIE у человека ещё нет — в «моих данных»
+    // документ выбирать «Паспорт».
+    { key: 'nie',
+      label: 'ASIGNACIÓN DE NIE (Policía — первое получение номера)',
+      keyword: 'ASIGNACION NIE' },
   ];
   function activeTramites() {
     const sel = TRAMITES.filter((t) => (DATA.tramites || []).includes(t.key));
