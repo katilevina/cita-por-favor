@@ -39,6 +39,7 @@
     office: '',                 // легаси-поле для отката на ≤9.21: ключ при ровно одном офисе, иначе ''
     useClave: false,            // вход через Cl@ve: скрипт зовёт человека авторизоваться
     claveCert: false,           // Cl@ve через сертификат (eIdentifier) — авто-клик плитки
+    copyFromClave: true,        // жать «Copiar a datos solicitante»; false = заявитель из «Моих данных»
   };
   const store = {
     get: (k, d) => (typeof GM_getValue === 'function')
@@ -1382,10 +1383,24 @@
     certHint.style.cssText = 'margin:2px 0 0;font-size:10px;line-height:1.3;color:#fff';
     certHint.textContent = 'Сняли галочку — другой способ появится после завершения сессии Chrome.';
     searchForm.appendChild(certHint);
+    // заявитель может отличаться от владельца Cl@ve/сертификата (запись за
+    // другого человека): тогда «Copiar a datos solicitante» не жмём, имя/NIE
+    // берём из «Моих данных». Без Cl@ve кнопки «Copiar» нет — галочка скрыта.
+    const copyRow = document.createElement('label');
+    copyRow.style.cssText = checkRowCss + ';margin-top:4px;color:#fff';
+    const copyCb = document.createElement('input');
+    copyCb.type = 'checkbox';
+    copyCb.checked = DATA.copyFromClave !== false;
+    copyCb.style.cssText = 'margin:1px 0 0';
+    copyRow.appendChild(copyCb);
+    copyRow.appendChild(document.createTextNode(
+      'Заявитель — владелец Cl@ve (жать «Copiar a datos solicitante»). Сними, чтобы записать человека из «Моих данных»'));
+    searchForm.appendChild(copyRow);
     function renderClaveControls() {
       const usingClave = claveRadio.checked;
       certRow.style.display = usingClave ? 'flex' : 'none';
       certHint.style.display = usingClave ? 'block' : 'none';
+      copyRow.style.display = usingClave ? 'flex' : 'none';
       if (!usingClave) certCb.checked = false;
     }
     renderClaveControls();
@@ -1397,6 +1412,7 @@
         if (tramChecks[t.key].checked !== (DATA.tramites || []).includes(t.key)) return true;
       if (claveRadio.checked !== !!DATA.useClave) return true;
       if (claveRadio.checked && certCb.checked !== !!DATA.claveCert) return true;
+      if (claveRadio.checked && copyCb.checked !== (DATA.copyFromClave !== false)) return true;
       return false;
     }
     function updateSaveSearchBtn() { setDim(saveSearchBtn, !searchDirty()); }
@@ -1404,11 +1420,13 @@
     sinClaveRadio.addEventListener('change', () => { renderClaveControls(); updateSaveSearchBtn(); });
     claveRadio.addEventListener('change', () => { renderClaveControls(); updateSaveSearchBtn(); });
     certCb.addEventListener('change', updateSaveSearchBtn);
+    copyCb.addEventListener('change', updateSaveSearchBtn);
     updateSaveSearchBtn(); // при создании: ничего не меняли — погашена
     saveSearchBtn.onclick = () => {
       DATA.tramites = TRAMITES.filter((t) => tramChecks[t.key].checked).map((t) => t.key);
       DATA.useClave = claveRadio.checked;
       DATA.claveCert = DATA.useClave && certCb.checked;
+      if (DATA.useClave) DATA.copyFromClave = copyCb.checked;
       if (!DATA.tramites.length) { DATA.tramites = ['huellas']; tramChecks.huellas.checked = true; }
       store.set('ck_data', JSON.stringify(DATA));
       updateSaveSearchBtn(); // галочки = данные → кнопка гаснет
@@ -2527,9 +2545,13 @@
         // защищает от кода 0017 «слишком быстрый ввод»). Кнопка НЕ подставляет
         // страну — её выбираем сами. Что кнопка не заполнила (или её нет —
         // анонимный режим) — дописываем как раньше, по-человечески с паузами.
-        status('Копирую данные из Cl@ve (как человек)…');
-        const copyBtn = [...document.querySelectorAll('input[type=button],input[type=submit],button,a')]
-          .find((b) => /copiar\s+a\s+datos|copiar.*solicitante/i.test(b.value || b.textContent || ''));
+        // copyFromClave=false: заявитель — не владелец Cl@ve. «Copiar» не жмём,
+        // имя/NIE/год пишем из «Моих данных» поверх того, что уже в полях.
+        const useOwn = DATA.useClave && DATA.copyFromClave === false;
+        const copyBtn = useOwn ? null :
+          [...document.querySelectorAll('input[type=button],input[type=submit],button,a')]
+            .find((b) => /copiar\s+a\s+datos|copiar.*solicitante/i.test(b.value || b.textContent || ''));
+        status(copyBtn ? 'Копирую данные из Cl@ve (как человек)…' : 'Вписываю данные заявителя…');
         const radio = DATA.docType === 'PASSPORT'
           ? document.querySelector('#rdbTipoDocPas, input[name="rdbTipoDoc"][value*="PAS"]')
           : document.querySelector('#rdbTipoDocNie, input[name="rdbTipoDoc"][value*="N.I.E"]');
@@ -2540,10 +2562,10 @@
           if (radio && !radio.checked) {
             radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true }));
           }
-          if (!idField.value) fill(idField, DATA.docNumber);
+          if (useOwn || !idField.value) fill(idField, DATA.docNumber);
           const nm = document.querySelector('#txtDesCitado');
-          if (nm && !nm.value) fill(nm, DATA.fullName);
-          if (yr && !yr.value && DATA.birthYear) fill(yr, DATA.birthYear);
+          if (nm && (useOwn || !nm.value)) fill(nm, DATA.fullName);
+          if (yr && (useOwn || !yr.value) && DATA.birthYear) fill(yr, DATA.birthYear);
         };
         // v7.31: после «Copiar» печати почти нет (радиокнопка, иногда год,
         // страна) — остаток и страна ОДНИМ шагом, паузы personalFill*:
