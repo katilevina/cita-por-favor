@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas + recogida TIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.23
+// @version      9.23.2
 // @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas и recogida de tarjeta (получение готовой TIE), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
@@ -39,6 +39,8 @@
     office: '',                 // легаси-поле для отката на ≤9.21: ключ при ровно одном офисе, иначе ''
     useClave: false,            // вход через Cl@ve: скрипт зовёт человека авторизоваться
     claveCert: false,           // Cl@ve через сертификат (eIdentifier) — авто-клик плитки
+    copyFromClave: true,        // false = записываем ДРУГОГО человека: «Copiar a datos
+                                // solicitante» не жмём, имя/NIE/год — из «Моих данных»
   };
   const store = {
     get: (k, d) => (typeof GM_getValue === 'function')
@@ -1382,10 +1384,50 @@
     certHint.style.cssText = 'margin:2px 0 0;font-size:10px;line-height:1.3;color:#fff';
     certHint.textContent = 'Сняли галочку — другой способ появится после завершения сессии Chrome.';
     searchForm.appendChild(certHint);
+    // Кому записываемся (только при Cl@ve). Идея и первая реализация — PR #2
+    // (Konstantin Chukreev); у нас выбор оформлен двумя пунктами вместо галочки.
+    // «Себе» — на сайте жмём «Copiar a datos solicitante», сайт подставляет
+    // владельца Cl@ve. «Другому» — «Copiar» не жмём (подставил бы владельца),
+    // заявителя вписываем из «Моих данных».
+    const applicantTitle = document.createElement('div');
+    applicantTitle.style.cssText = 'margin-top:6px;font-size:11px;color:#fff';
+    applicantTitle.textContent = 'Кому записываемся:';
+    searchForm.appendChild(applicantTitle);
+    const selfRow = document.createElement('label');
+    selfRow.style.cssText = checkRowCss + ';color:#fff';
+    const selfRadio = document.createElement('input');
+    selfRadio.type = 'radio';
+    selfRadio.name = 'ck-applicant';
+    selfRadio.checked = DATA.copyFromClave !== false;
+    selfRadio.style.cssText = 'margin:1px 0 0';
+    selfRow.appendChild(selfRadio);
+    selfRow.appendChild(document.createTextNode('Себе (владелец Cl@ve)'));
+    searchForm.appendChild(selfRow);
+    const otherRow = document.createElement('label');
+    otherRow.style.cssText = checkRowCss + ';color:#fff';
+    const otherRadio = document.createElement('input');
+    otherRadio.type = 'radio';
+    otherRadio.name = 'ck-applicant';
+    otherRadio.checked = DATA.copyFromClave === false;
+    otherRadio.style.cssText = 'margin:1px 0 0';
+    otherRow.appendChild(otherRadio);
+    otherRow.appendChild(document.createTextNode('Другому человеку (из «Мои данные»)'));
+    searchForm.appendChild(otherRow);
+    const applicantHint = document.createElement('div');
+    applicantHint.style.cssText = 'margin:2px 0 0;font-size:10px;line-height:1.3;color:#fff';
+    applicantHint.textContent = 'Данные заявителя скрипт возьмёт из «👤 Изменить мои данные».';
+    searchForm.appendChild(applicantHint);
+    function renderApplicantHint() {
+      applicantHint.style.display = (claveRadio.checked && otherRadio.checked) ? 'block' : 'none';
+    }
     function renderClaveControls() {
       const usingClave = claveRadio.checked;
       certRow.style.display = usingClave ? 'flex' : 'none';
       certHint.style.display = usingClave ? 'block' : 'none';
+      applicantTitle.style.display = usingClave ? 'block' : 'none';
+      selfRow.style.display = usingClave ? 'flex' : 'none';
+      otherRow.style.display = usingClave ? 'flex' : 'none';
+      renderApplicantHint();
       if (!usingClave) certCb.checked = false;
     }
     renderClaveControls();
@@ -1397,6 +1439,7 @@
         if (tramChecks[t.key].checked !== (DATA.tramites || []).includes(t.key)) return true;
       if (claveRadio.checked !== !!DATA.useClave) return true;
       if (claveRadio.checked && certCb.checked !== !!DATA.claveCert) return true;
+      if (claveRadio.checked && otherRadio.checked !== (DATA.copyFromClave === false)) return true;
       return false;
     }
     function updateSaveSearchBtn() { setDim(saveSearchBtn, !searchDirty()); }
@@ -1404,11 +1447,15 @@
     sinClaveRadio.addEventListener('change', () => { renderClaveControls(); updateSaveSearchBtn(); });
     claveRadio.addEventListener('change', () => { renderClaveControls(); updateSaveSearchBtn(); });
     certCb.addEventListener('change', updateSaveSearchBtn);
+    function onApplicantChange() { renderApplicantHint(); updateSaveSearchBtn(); }
+    selfRadio.addEventListener('change', onApplicantChange);
+    otherRadio.addEventListener('change', onApplicantChange);
     updateSaveSearchBtn(); // при создании: ничего не меняли — погашена
     saveSearchBtn.onclick = () => {
       DATA.tramites = TRAMITES.filter((t) => tramChecks[t.key].checked).map((t) => t.key);
       DATA.useClave = claveRadio.checked;
       DATA.claveCert = DATA.useClave && certCb.checked;
+      if (DATA.useClave) DATA.copyFromClave = selfRadio.checked;
       if (!DATA.tramites.length) { DATA.tramites = ['huellas']; tramChecks.huellas.checked = true; }
       store.set('ck_data', JSON.stringify(DATA));
       updateSaveSearchBtn(); // галочки = данные → кнопка гаснет
@@ -2527,23 +2574,30 @@
         // защищает от кода 0017 «слишком быстрый ввод»). Кнопка НЕ подставляет
         // страну — её выбираем сами. Что кнопка не заполнила (или её нет —
         // анонимный режим) — дописываем как раньше, по-человечески с паузами.
-        status('Копирую данные из Cl@ve (как человек)…');
-        const copyBtn = [...document.querySelectorAll('input[type=button],input[type=submit],button,a')]
-          .find((b) => /copiar\s+a\s+datos|copiar.*solicitante/i.test(b.value || b.textContent || ''));
+        // Запись ДРУГОМУ человеку (copyFromClave=false, PR #2): «Copiar» не жмём —
+        // он подставил бы владельца Cl@ve — и имя/NIE/год пишем из «Моих данных».
+        const otherApplicant = DATA.useClave && DATA.copyFromClave === false;
+        const copyBtn = otherApplicant ? null
+          : [...document.querySelectorAll('input[type=button],input[type=submit],button,a')]
+            .find((b) => /copiar\s+a\s+datos|copiar.*solicitante/i.test(b.value || b.textContent || ''));
+        status(otherApplicant ? 'Вписываю заявителя из моих данных…'
+          : copyBtn ? 'Копирую данные из Cl@ve (как человек)…'
+          : 'Вписываю данные заявителя…');
         const radio = DATA.docType === 'PASSPORT'
           ? document.querySelector('#rdbTipoDocPas, input[name="rdbTipoDoc"][value*="PAS"]')
           : document.querySelector('#rdbTipoDocNie, input[name="rdbTipoDoc"][value*="N.I.E"]');
         const yr = document.querySelector('#txtAnnoCitado');
         const pais = document.querySelector('#txtPaisNac');
-        // страховка: дописываем только то, что осталось пустым после «Copiar»
+        // страховка: дописываем только то, что осталось пустым после «Copiar»;
+        // «другому человеку» — пишем из «Моих данных» поверх, чего бы ни стояло
         const fillRemainder = () => {
           if (radio && !radio.checked) {
             radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true }));
           }
-          if (!idField.value) fill(idField, DATA.docNumber);
+          if (otherApplicant || !idField.value) fill(idField, DATA.docNumber);
           const nm = document.querySelector('#txtDesCitado');
-          if (nm && !nm.value) fill(nm, DATA.fullName);
-          if (yr && !yr.value && DATA.birthYear) fill(yr, DATA.birthYear);
+          if (nm && (otherApplicant || !nm.value)) fill(nm, DATA.fullName);
+          if (yr && (otherApplicant || !yr.value) && DATA.birthYear) fill(yr, DATA.birthYear);
         };
         // v7.31: после «Copiar» печати почти нет (радиокнопка, иногда год,
         // страна) — остаток и страна ОДНИМ шагом, паузы personalFill*:
