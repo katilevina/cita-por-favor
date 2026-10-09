@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas + recogida TIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.23.1
+// @version      9.23.3
 // @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas и recogida de tarjeta (получение готовой TIE), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
@@ -2544,9 +2544,13 @@
         const pais = document.querySelector('#txtPaisNac');
         // страховка: дописываем только то, что осталось пустым после «Copiar»
         const fillRemainder = () => {
-          if (radio && !radio.checked) {
-            radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true }));
-          }
+          // v9.23.3 (репорт Миланы, 09.10): лейбл/валидатор поля номера сайт
+          // обновляет только на настоящий клик по радиокнопке. Установка
+          // checked + синтетический change (до 9.23.3) оставляла поле в
+          // формате «* N.I.E.» (требует X/T/Z) — паспортный номер сайт не
+          // принимал; руками лечилось переключением DNI → Pasaporte.
+          // Настоящий .click() прогоняет сайтный обработчик сам.
+          if (radio && !radio.checked) radio.click();
           if (!idField.value) fill(idField, DATA.docNumber);
           const nm = document.querySelector('#txtDesCitado');
           if (nm && !nm.value) fill(nm, DATA.fullName);
