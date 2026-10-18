@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Cita Por Favor — huellas + tarjetas + recogida TIE + asignación NIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.25
+// @version      9.25.1
 // @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas, recogida de tarjeta (получение готовой TIE) и asignación de NIE (первичное назначение номера), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey. При входе через Cl@ve можно записать себя или другого человека.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
@@ -502,6 +502,7 @@
     stopped: 'Проверка сит остановилась. Посмотри, когда будет минутка.',
     unknown: 'Проверка сит увидела незнакомую страницу и остановилась.',
     clave: 'Нужна авторизация Cl@ve — подтверди вход в приложении на телефоне.',
+    cert: 'Подтверди сертификат в окне Chrome — выбери его и нажми ОК.',
     test: 'Проверка связи. Голос работает.',
   };
 
@@ -1226,7 +1227,7 @@
     // ✋-паузы больше нет — «не трогай сайт» это и есть пошаговый
     stepToggle = mkBtn('Включить пошаговый режим', '#2980b9');
     stepToggle.onclick = () => {
-      if (stepMode()) SS.del('step');
+      if (stepMode()) { SS.del('step'); fillStepQueue = null; } // выход из пошагового — очередь не нужна
       else { SS.set('step', '1'); status('👣 Пошагово: ритм заморожен — жми «Следующий шаг»', '#ffd27f'); }
       renderState();
     };
@@ -1236,6 +1237,15 @@
       stopped = false; waiting = false;
       const nextAt = parseInt(SS.get('nextAt') || '0', 10);
       if (nextAt) { SS.del('nextAt'); startNewCheck(); return; }
+      // v9.25.1: на экранах заполнения (заявитель/телефон) tick шагов не знает —
+      // исполняем следующий из очереди fillHumanly, по одному на нажатие
+      if (fillStepQueue && fillStepQueue.length) {
+        fillStepQueue.shift()();
+        status(fillStepQueue.length
+          ? '👣 Шаг сделан — ещё ' + fillStepQueue.length + ' (жми «Следующий шаг»)'
+          : '👣 Последний шаг заполнения', '#ffd27f');
+        return;
+      }
       forcingStep = true;
       try { tick(); } finally { forcingStep = false; }
     };
@@ -1992,7 +2002,22 @@
   // (обычно отправка). Сайт меряет скорость ввода и при мгновенном заполнении даёт
   // коды «слишком быстрый ввод»: 0017 на форме заявителя, 0018 на телефоне/почте —
   // и ситу мы теряем. Возвращает, сколько миллисекунд займёт весь ввод.
+  // v9.25.1: в пошаговом режиме шаги складываются в очередь, и каждый клик
+  // «Следующий шаг» исполняет один (заявитель: Copiar → поля/страна → Enviar).
+  // До v9.25.1 таймеры заполнения гасились guard'ом !stepMode — вместе с ними
+  // молча умерло заполнение по кнопке: экраны заявителя/телефона в пошаговом
+  // не заполнялись вообще (жалоба 13.10). Очередь живёт в пределах страницы:
+  // новый экран = новая загрузка = пустая очередь.
+  let fillStepQueue = null;
   function fillHumanly(steps, done, minSec, maxSec) {
+    if (stepMode()) {
+      if (fillStepQueue && fillStepQueue.length) return 0; // уже идёт — дальше по кнопке
+      fillStepQueue = steps.slice();
+      fillStepQueue.push(done);
+      status('👣 Пошаговое заполнение: ' + fillStepQueue.length + ' шагов — жми «Следующий шаг»', '#ffd27f');
+      fillStepQueue.shift()();
+      return 0;
+    }
     // minSec/maxSec — свои паузы для конкретного экрана (телефон быстрее, v7.30);
     // без них — обычный человеческий темп humanFill*
     const lo = (minSec != null) ? minSec : CONFIG.humanFillMinSec;
@@ -2323,6 +2348,27 @@
       SS.del('caducada'); // форма открылась — рестарты после протухшей сессии обнуляем
       SS.del('provBounce'); // прошли выбор провинции — счётчик отскоков чист
       if (tooManyP1Submits()) {
+        // v9.25.1: в режиме сертификата цикл первого экрана сразу после захода
+        // в Cl@ve — почти всегда незакрытое нативное окно Chrome с выбором
+        // сертификата: платформа по таймауту возвращает на сайт без авторизации,
+        // и форма уходит по кругу (жалоба 13.10 — «первый экран зациклился»).
+        // Не бросаем вахту сразу: зовём голосом, форму не трогаем, повторяем
+        // позже; после 3 таких кругов подряд — прежний жёсткий стоп.
+        // certLoops чистится на глубоких экранах (заявитель/меню/вердикт) —
+        // значит, авторизация прошла и цикл закончился.
+        const flowAt = parseInt(store.get('ck_claveFlow', '0'), 10);
+        const certLoops = parseInt(SS.get('certLoops') || '0', 10);
+        if (DATA.useClave && DATA.claveCert && flowAt &&
+            Date.now() - flowAt < 5 * 60000 && certLoops < 3) {
+          SS.set('certLoops', String(certLoops + 1));
+          if (!recently('certWait', 90000)) {
+            recordResult('CLAVE_AUTH_WAIT');
+            fireAlert('cert');
+          }
+          stopped = true; // форму не трогаем — ждём человека, повтор по расписанию
+          scheduleNext(CONFIG.unknownRetryMin * 60000, 'Сертификат не подтверждён — повторю');
+          return;
+        }
         status('⚠️ Первый экран не пропускает. Проверь данные/выбери вручную, я на паузе.', '#ffcc66');
         stopped = true;
         if (driving()) checkerStop('⚠️ Первый экран зациклился — проверка остановлена', 'unknown');
@@ -2379,6 +2425,7 @@
     if (bodyText.includes('no hay citas disponibles') ||
         bodyText.includes('no hay suficientes citas')) {
       noteStep('nocitas');
+      SS.del('certLoops'); // вердикт получен — cert-цикл закончен (v9.25.1)
       if (foundMode() && driving()) {
         // слоты были и испарились на полпути: окно часто возвращается
         // (сорванные брони отпадают) — продолжаем охоту на той же услуге,
@@ -2563,6 +2610,7 @@
     const idField = document.querySelector('#txtIdCitado');
     if (idField) {
       noteStep('step3');
+      SS.del('certLoops'); // дошли до заявителя — авторизация прошла, cert-цикл закончен (v9.25.1)
       SS.set('deepFill', '1'); // v9.5: дошли до экрана заявителя (имя/NIE/страна,
                                // заполняется после Cl@ve) — вердикт будет «после
                                // данных». Ставим по факту экрана: чекер идёт или
@@ -2574,8 +2622,9 @@
         return;
       }
       // guard длиннее всего человеческого заполнения (~6–9 с), иначе tick через
-      // 5 с повторно войдёт и начнёт печатать заново поверх недозаполненного
-      if (!recently('fillpersonal', 20000)) {
+      // 5 с повторно войдёт и начнёт печатать заново поверх недозаполненного.
+      // v9.25.1: пошаговому режиму guard не нужен — там шаги идут по кнопке
+      if (stepMode() || !recently('fillpersonal', 20000)) {
         // Как делает человек: жмём «Copiar a datos solicitante» — сайт сам
         // подставляет NIE/имя из личности Cl@ve, печатать ничего не надо (это и
         // защищает от кода 0017 «слишком быстрый ввод»). Кнопка НЕ подставляет
@@ -2636,6 +2685,7 @@
       .find((b) => /solicitar\s+cita/i.test(b.value || b.textContent || ''));
     if (solicitarBtn) {
       noteStep('actions');
+      SS.del('certLoops'); // меню после авторизации — cert-цикл закончен (v9.25.1)
       if (!recently('solicitar', 5000)) {
         status('Запрашиваю ситы (Solicitar Cita)…');
         solicitarBtn.click();
@@ -2760,8 +2810,9 @@
     const tel = document.querySelector('#txtTelefonoCitado');
     if (tel) {
       noteStep('step5');
-      // guard длиннее всего заполнения (~6–9 с), иначе tick войдёт повторно
-      if (!recently('contact', 20000)) {
+      // guard длиннее всего заполнения (~6–9 с), иначе tick войдёт повторно;
+      // v9.25.1: пошаговому режиму guard не нужен — там шаги идут по кнопке
+      if (stepMode() || !recently('contact', 20000)) {
         // по одному полю с паузами: мгновенное заполнение телефона и двух email
         // за <1 с давало код 0018 «слишком быстрый ввод» и теряло уже пойманную ситу.
         // Паузы для этого экрана свои (contactFill*, v7.30): быстрее формы
@@ -2859,10 +2910,19 @@
   function clavePlatformFlow() {
     if (!DATA.useClave) return; // не наш случай — молчим
     if (!DATA.claveCert) { claveBadge('выбери способ входа вручную', '#ffd27f'); return; }
-    // антидребезг: не жать чаще раза в 15 с (чтобы не зациклить при таймауте сервера),
-    // но и не «один раз навсегда» — если вернулись на выбор, поможем снова
+    // антидребезг: не жать чаще раза в 15 с (чтобы не зациклить при таймауте
+    // сервера), но и не «один раз навсегда» — если вернулись на выбор, поможем
+    // снова. v9.25.1: дребезг считаем только ВНУТРИ одного захода (clicked
+    // новее flow — ререндеры страницы платформы). Новый заход с сайта несёт
+    // свежий ck_claveFlow — кликаем сразу: раньше при быстром возврате-повторе
+    // 15-секундный антидребезг глотал клик, авторизация не начиналась и цикл
+    // «первый экран → Cl@ve → откат» самоподдерживался.
+    const flowAt = parseInt(store.get('ck_claveFlow', '0'), 10);
     const last = parseInt(store.get('ck_claveClicked', '0'), 10);
-    if (Date.now() - last < 15000) { claveBadge('только что нажала eIdentifier, жду…', '#7CFC00'); return; }
+    if (last > flowAt && Date.now() - last < 15000) {
+      claveBadge('только что нажала eIdentifier, жду…', '#7CFC00');
+      return;
+    }
     claveBadge('ищу кнопку eIdentifier…', '#ffd27f');
     let tries = 0;
     const timer = setInterval(() => {
