@@ -1,7 +1,8 @@
 # Cita Por Favor
 
 Локальный помощник для проверки доступности cita на toma de huellas,
-expedición de tarjetas и recogida de tarjeta (получение готовой TIE)
+expedición de tarjetas, recogida de tarjeta (получение готовой TIE)
+и asignación de NIE (первичное назначение номера)
 в провинции Barcelona. Он работает в вашем обычном
 Chrome через Tampermonkey: проверяет наличие свободных записей в выбранном
 вами ритме и сообщает о находке. Финальные действия всегда остаются за вами.

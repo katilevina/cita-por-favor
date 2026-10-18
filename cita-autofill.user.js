@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Cita Por Favor — huellas + tarjetas + recogida TIE (Barcelona, вся провинция)
+// @name         Cita Por Favor — huellas + tarjetas + recogida TIE + asignación NIE (Barcelona, вся провинция)
 // @namespace    cita-catcher.local
-// @version      9.24
-// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas и recogida de tarjeta (получение готовой TIE), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey. При входе через Cl@ve можно записать себя или другого человека.
+// @version      9.25
+// @description  Cita Por Favor проверяет ситы по провинции Барселона («Cualquier oficina» — вся провинция, или офисы, выбранные галочками на панели): вкладка сама проверяет наличие сит на toma de huellas, expedición de tarjetas, recogida de tarjeta (получение готовой TIE) и asignación de NIE (первичное назначение номера), при находке заполняет форму и зовёт голосом компьютера — за человеком только SMS-код и Confirmar. Ритм задаётся отдельными пресетами для часовых окон и интервального режима; свои пресеты можно сохранять. Без обхода защиты: реальный браузер, человеческий темп, backoff при блокировке. Личные данные вводятся через панель (кнопка «Изменить мои данные») и хранятся только в Tampermonkey. При входе через Cl@ve можно записать себя или другого человека.
 // @match        https://icp.administracionelectronica.gob.es/*
 // @match        https://pasarela.clave.gob.es/*
 // @match        https://*.clave.gob.es/*
@@ -154,6 +154,13 @@
     { key: 'recogida',
       label: 'RECOGIDA DE TARJETA (TIE) — получение готовой карты',
       keyword: 'RECOGIDA DE TARJETA' },
+    // v9.23.1 (просьба пользовательницы, 30.09): «POLICIA — ASIGNACIÓN NIE» —
+    // первичное назначение номера NIE. Ключ 'ASIGNACION NIE' с существующими
+    // не пересекается. Нюанс данных: NIE у человека ещё нет — в «моих данных»
+    // документ выбирать «Паспорт».
+    { key: 'nie',
+      label: 'ASIGNACIÓN DE NIE (Policía — первое получение номера)',
+      keyword: 'ASIGNACION NIE' },
   ];
   function activeTramites() {
     const sel = TRAMITES.filter((t) => (DATA.tramites || []).includes(t.key));
@@ -2591,9 +2598,13 @@
         // страховка: дописываем только то, что осталось пустым после «Copiar»;
         // «другому человеку» — пишем из «Моих данных» поверх, чего бы ни стояло
         const fillRemainder = () => {
-          if (radio && !radio.checked) {
-            radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true }));
-          }
+          // v9.23.3 (репорт Миланы, 09.10): лейбл/валидатор поля номера сайт
+          // обновляет только на настоящий клик по радиокнопке. Установка
+          // checked + синтетический change (до 9.23.3) оставляла поле в
+          // формате «* N.I.E.» (требует X/T/Z) — паспортный номер сайт не
+          // принимал; руками лечилось переключением DNI → Pasaporte.
+          // Настоящий .click() прогоняет сайтный обработчик сам.
+          if (radio && !radio.checked) radio.click();
           if (otherApplicant || !idField.value) fill(idField, DATA.docNumber);
           const nm = document.querySelector('#txtDesCitado');
           if (nm && (otherApplicant || !nm.value)) fill(nm, DATA.fullName);
