@@ -26,6 +26,7 @@
   // В коде их НЕТ: заполняются один раз через кнопку «👤 Изменить мои данные» на панели
   // и хранятся в хранилище Tampermonkey (переживают обновления скрипта).
   const DATA_DEFAULTS = {
+    lang: 'en',                 // язык панели (en по умолчанию; переключатель EN/RU на панели)
     docType: 'NIE',             // NIE или PASSPORT (выбор в панели)
     docNumber: '',
     fullName: '',
@@ -60,6 +61,23 @@
     store.set('ck_data', JSON.stringify(DATA));
   }
   const dataReady = () => !!(DATA.docNumber && DATA.fullName && DATA.phone && DATA.email);
+
+  // ============ ЯЗЫК ИНТЕРФЕЙСА (i18n: EN по умолчанию + RU, расширяемо) ============
+  // Чтобы добавить новый язык позже, достаточно добавить код в LANGUAGES и
+  // передать перевод в extra-аргумент L(ru, en, { es: '...' }).
+  const LANGUAGES = {
+    en: { label: 'EN · English', ttsLang: 'en-US' },
+    ru: { label: 'RU · Русский', ttsLang: 'ru-RU' },
+  };
+  function getLang() {
+    return LANGUAGES[DATA.lang] ? DATA.lang : 'en';
+  }
+  function L(ru, en, extra) {
+    const lg = getLang();
+    if (lg === 'ru') return ru;
+    if (extra && extra[lg] !== undefined) return extra[lg];
+    return en;
+  }
 
   // Офисы провинции Барселона — список снят с сайта citar?p=8 (02.09.2026):
   // 24 комиссариа провинции + 4 офиса собственно Барселоны. По умолчанию ничего
@@ -116,43 +134,61 @@
   // короткая подпись для журнала (бюджет строки ~40 символов, см. выше)
   function officesShort() {
     const sel = selectedOffices();
-    if (!sel.length) return 'провинция';
-    return sel.length === 1 ? sel[0].short : 'офисы ' + sel.length;
+    if (!sel.length) return L('провинция', 'province');
+    return sel.length === 1 ? sel[0].short : L('офисы ', 'offices ') + sel.length;
   }
   // режим поиска — одинаково формулируем в сводке секции, подсказке и статусе,
   // чтобы было видно, ЧТО именно меняет количество галочек
   function officesModeShort() { // сводка секции (видна и свёрнутой)
     const sel = selectedOffices();
-    if (!sel.length) return 'Вся провинция — берём любой офис';
-    if (sel.length === 1) return sel[0].short + ' — ищем только этот офис';
-    return sel.length + ' офисов — ищем всю провинцию, берём свои';
+    if (!sel.length) return L('Вся провинция — берём любой офис', 'All province — take any office');
+    if (sel.length === 1) return sel[0].short + L(' — ищем только этот офис', ' — check only this office');
+    return sel.length + L(' офисов — ищем всю провинцию, берём свои', ' offices — check all province, take selected');
   }
   function officesModeHint() { // подсказка внутри списка
     const sel = selectedOffices();
-    if (!sel.length) return 'Поиск по всей провинции; на экране офисов берём любой.';
-    if (sel.length === 1) return 'Поиск только по этому офису.';
-    return 'Каждый заход ищет всю провинцию (Cualquier oficina), бронь — только выбранные офисы; чужие = «сит нет».';
+    if (!sel.length) return L(
+      'Поиск по всей провинции; на экране офисов берём любой.',
+      'Searches the whole province; takes any available office.'
+    );
+    if (sel.length === 1) return L('Поиск только по этому офису.', 'Searches only this specific office.');
+    return L(
+      'Каждый заход ищет всю провинцию (Cualquier oficina), бронь — только выбранные офисы; чужие = «сит нет».',
+      'Each check searches the whole province (Cualquier oficina), bookings only for selected offices; others = "no slots".'
+    );
   }
   function officesModeStatus() { // статус после смены выбора
     const sel = selectedOffices();
-    if (!sel.length) return 'Офисы: вся провинция — берём любой; со следующего захода';
-    if (sel.length === 1) return 'Офисы: ' + sel[0].short + ' — только его; со следующего захода';
-    return 'Офисы: ' + sel.length + ' шт — ищу всю провинцию, беру свои; со следующего захода';
+    if (!sel.length) return L(
+      'Офисы: вся провинция — берём любой; со следующего захода',
+      'Offices: all province — take any; from next check'
+    );
+    if (sel.length === 1) return L(
+      'Офисы: ' + sel[0].short + ' — только его; со следующего захода',
+      'Offices: ' + sel[0].short + ' — only this one; from next check'
+    );
+    return L(
+      'Офисы: ' + sel.length + ' шт — ищу всю провинцию, беру свои; со следующего захода',
+      'Offices: ' + sel.length + ' selected — search province, take mine; from next check'
+    );
   }
   // Услуги, которые умеем ловить. Галочки — в «🔎 Настройки поиска».
   // Если отмечено несколько, чекер чередует их по кругу (нагрузка не растёт).
   const TRAMITES = [
     { key: 'huellas',
       label: 'TOMA DE HUELLAS (expedición de tarjeta)',
+      labelEn: 'TOMA DE HUELLAS (fingerprints / TIE card renewal & issuance)',
       keyword: 'TOMA DE HUELLAS' },
     { key: 'tarjetas',
       label: 'EXPEDICIÓN DE TARJETAS (Dirección General de Gestión Migratoria)',
+      labelEn: 'EXPEDICIÓN DE TARJETAS (Dirección General de Gestión Migratoria)',
       keyword: 'GESTIÓN MIGRATORIA' },
     // v9.23 (контриб тестера, 24.09): в некоторых отделениях на ПОЛУЧЕНИЕ
     // готовой карточки тоже нужна сита — ловим и её. Ключ 'RECOGIDA DE TARJETA'
     // совпадает и с «TARJETA», и с «TARJETAS», с huellas/tarjetas не пересекается.
     { key: 'recogida',
       label: 'RECOGIDA DE TARJETA (TIE) — получение готовой карты',
+      labelEn: 'RECOGIDA DE TARJETA (TIE) — pick up ready card',
       keyword: 'RECOGIDA DE TARJETA' },
     // v9.23.1 (просьба пользовательницы, 30.09): «POLICIA — ASIGNACIÓN NIE» —
     // первичное назначение номера NIE. Ключ 'ASIGNACION NIE' с существующими
@@ -160,6 +196,7 @@
     // документ выбирать «Паспорт».
     { key: 'nie',
       label: 'ASIGNACIÓN DE NIE (Policía — первое получение номера)',
+      labelEn: 'ASIGNACIÓN DE NIE (Policía — first-time NIE number)',
       keyword: 'ASIGNACION NIE' },
   ];
   function activeTramites() {
@@ -176,28 +213,32 @@
   function nextTramite() {
     SS.set('tramIdx', String(parseInt(SS.get('tramIdx') || '0', 10) + 1));
   }
-  // подписи для журнала: [значок, текст]. ⚠️ — только настоящие ошибки.
+  // подписи для журнала: [значок, текст RU, текст EN]. ⚠️ — только настоящие ошибки.
   const LOG_LABELS = {
-    NO_SLOTS:          ['·', 'сит нет'],
-    SLOTS_FOUND:       ['🎉', 'СИТЫ найдены'],
-    SLOTS_CAPTCHA:     ['🎉', 'СИТЫ — введи капчу'],
-    SLOTS_FOUND_FINAL: ['🎉', 'СИТЫ — финал, SMS+Confirmar'],
-    SLOTS_CONFIRMED:   ['✅', 'СИТА ПОДТВЕРЖДЕНА'], // после Confirmar, экран успеха
-    CONFIG:            ['⚙️', 'старт'],
-    RESUMED:           ['🔄', 'ожил после заморозки'],
-    CLAVE_NEEDED:      ['🔐', 'Cl@ve: нужен вход'],
-    CLAVE_AUTH_WAIT:   ['🔐', 'Cl@ve: авторизация'],
-    SLOTS_LOST:        ['⚠️', 'слоты сорвались'],
-    WAF_BLOCKED:       ['⚠️', 'блок сайта'],
-    CODE_BLOCK:        ['⚠️', 'бот-блок'],
-    UNKNOWN:           ['⚠️', 'незнакомая страница'],
-    SITE_ERROR:        ['⚠️', 'ошибка сайта'],
-    SITE_MAINTENANCE:  ['🛠️', 'обслуживание сайта'],
-    TRAMITE_MISSING:   ['⚠️', 'услуга недоступна'],
-    OFFICE_MISSING:    ['⚠️', 'офиса нет'],
-    OFFICE_NOTOURS:    ['·', 'ситы не в моих'], // строка ≤40: «· ситы не в моих: 3 чужих»
-    SESSION_LOOP:      ['⚠️', 'сессия не восстанавливается'],
+    NO_SLOTS:          ['·', 'сит нет', 'no slots'],
+    SLOTS_FOUND:       ['🎉', 'СИТЫ найдены', 'SLOTS FOUND'],
+    SLOTS_CAPTCHA:     ['🎉', 'СИТЫ — введи капчу', 'SLOTS — enter captcha'],
+    SLOTS_FOUND_FINAL: ['🎉', 'СИТЫ — финал, SMS+Confirmar', 'SLOTS — final, SMS+Confirmar'],
+    SLOTS_CONFIRMED:   ['✅', 'СИТА ПОДТВЕРЖДЕНА', 'APPOINTMENT CONFIRMED'], // после Confirmar, экран успеха
+    CONFIG:            ['⚙️', 'старт', 'start'],
+    RESUMED:           ['🔄', 'ожил после заморозки', 'resumed after freeze'],
+    CLAVE_NEEDED:      ['🔐', 'Cl@ve: нужен вход', 'Cl@ve: login needed'],
+    CLAVE_AUTH_WAIT:   ['🔐', 'Cl@ve: авторизация', 'Cl@ve: waiting auth'],
+    SLOTS_LOST:        ['⚠️', 'слоты сорвались', 'slots lost'],
+    WAF_BLOCKED:       ['⚠️', 'блок сайта', 'site block'],
+    CODE_BLOCK:        ['⚠️', 'бот-блок', 'bot-block'],
+    UNKNOWN:           ['⚠️', 'незнакомая страница', 'unknown page'],
+    SITE_ERROR:        ['⚠️', 'ошибка сайта', 'site error'],
+    SITE_MAINTENANCE:  ['🛠️', 'обслуживание сайта', 'site maintenance'],
+    TRAMITE_MISSING:   ['⚠️', 'услуга недоступна', 'service unavailable'],
+    OFFICE_MISSING:    ['⚠️', 'офиса нет', 'office missing'],
+    OFFICE_NOTOURS:    ['·', 'ситы не в моих', 'slots not in mine'], // строка ≤40: «· ситы не в моих: 3 чужих»
+    SESSION_LOOP:      ['⚠️', 'сессия не восстанавливается', 'session recovery failed'],
   };
+  function logLabelText(state) {
+    const row = LOG_LABELS[state];
+    return row ? L(row[1], row[2] || row[1]) : state;
+  }
 
   // короткая сводка активных настроек — для журнала и панели.
   // v9.2: офис показываем только в журнале (withOffice) — на панели офисы и так
@@ -205,12 +246,12 @@
   // списке пресетов «Настроить ритм проверки», к ритму и относится.
   function settingsSummary(withOffice = true) { // журнал — с офисом; панель просит без
     const parts = [(DATA.tramites || []).join('+') || 'huellas'];
-    if (DATA.useClave) parts.push(DATA.claveCert ? 'Cl@ve-серт' : 'Cl@ve-моб');
-    else parts.push('аноним');
+    if (DATA.useClave) parts.push(DATA.claveCert ? L('Cl@ve-серт', 'Cl@ve-cert') : L('Cl@ve-моб', 'Cl@ve-mob'));
+    else parts.push(L('аноним', 'no-Cl@ve'));
     if (withOffice) {
       const sel = selectedOffices();
-      if (sel.length === 1) parts.push('офис ' + sel[0].short);
-      else if (sel.length > 1) parts.push('офисы ' + sel.length);
+      if (sel.length === 1) parts.push(L('офис ', 'office ') + sel[0].short);
+      else if (sel.length > 1) parts.push(L('офисы ', 'offices ') + sel.length);
     }
     return parts.join(' · ');
   }
@@ -326,7 +367,12 @@
       lostRetryMaxSec: 12,
     },
   };
-  // v9.3: интервал форсажа — НЕ часть пресета: настройка отдельная, живёт в
+  const PRESET_NAMES_EN = {
+    'Рекомендованные часовые окна': 'Recommended hourly windows',
+    'Рекомендованный интервальный ритм': 'Recommended interval rhythm',
+    '(свои)': '(custom)',
+  };
+  const presetDisplay = (name) => L(name, PRESET_NAMES_EN[name] || name);
   // RUN сама по себе. Пресетом не меняется, правка поля пресет не сбрасывает.
   for (const p of Object.values(BUILTIN_PRESETS)) delete p.boostSec;
   // разбор «6-13, 19-23» → [[6,13],[19,23]]; null = формат неверный
@@ -497,13 +543,13 @@
 
   // ---------- голосовые алерты ----------
   const FALLBACK_TEXT = {
-    found: 'Ситы пойманы, всё заполнено! Введи SMS-код и нажми Confirmar!',
-    help: 'Ситы есть, но нужна твоя помощь! Подойди к компьютеру!',
-    stopped: 'Проверка сит остановилась. Посмотри, когда будет минутка.',
-    unknown: 'Проверка сит увидела незнакомую страницу и остановилась.',
-    clave: 'Нужна авторизация Cl@ve — подтверди вход в приложении на телефоне.',
-    cert: 'Подтверди сертификат в окне Chrome — выбери его и нажми ОК.',
-    test: 'Проверка связи. Голос работает.',
+    found:   ['Ситы пойманы, всё заполнено! Введи SMS-код и нажми Confirmar!', 'Appointments found and form filled! Enter the SMS code and click Confirmar!'],
+    help:    ['Ситы есть, но нужна твоя помощь! Подойди к компьютеру!', 'Appointments available, your help is needed! Come to the computer!'],
+    stopped: ['Проверка сит остановилась. Посмотри, когда будет минутка.', 'Appointment checker stopped. Please check when you have a moment.'],
+    unknown: ['Проверка сит увидела незнакомую страницу и остановилась.', 'Appointment checker encountered an unknown page and stopped.'],
+    clave:   ['Нужна авторизация Cl@ve — подтверди вход в приложении на телефоне.', 'Cl@ve authentication required — please confirm login.'],
+    cert:    ['Подтверди сертификат в окне Chrome — выбери его и нажми ОК.', 'Please confirm your digital certificate in the Chrome dialog and click OK.'],
+    test:    ['Проверка связи. Голос работает.', 'Voice check. Audio alerts are working.'],
   };
 
   function gmGet(url, timeoutMs) {
@@ -533,10 +579,13 @@
 
   // Пишем каждую запись журнала в файл через хелпер — чтобы полная история
   // проверок жила на диске (ИИ-сессии могут её читать для контекста), а не
-  // только в localStorage вкладки. Хелпер не запущен → тихо пропускаем.
+  // только в localStorage вкладки. Хелпер есть только на macOS → на других ОС
+  // не опрашиваем локальный сервер и сразу используем встроенный голос браузера.
+  const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || '');
   function sendJournal(entry) {
+    if (!isMac) return;
     try {
-      const label = (LOG_LABELS[entry.s] && LOG_LABELS[entry.s][1]) || entry.s;
+      const label = logLabelText(entry.s);
       const line = new Date(entry.t).toLocaleString('ru') + '\t' + label +
         (entry.x ? '\t' + entry.x : '');
       gmPost(CONFIG.alertServer + '/journal', line, 3000).catch(() => {});
@@ -554,7 +603,7 @@
   // он снимается заново — две капчи в 11:01:11 и 11:01:42 дадут два файла).
   const snapped = {};
   function snapOnce(kind, note) {
-    if (snapped[kind]) return;
+    if (!isMac || snapped[kind]) return;
     snapped[kind] = true;
     try {
       const text = (document.body ? document.body.innerText : '').trim().slice(0, 40000);
@@ -569,6 +618,7 @@
 
   let helperOk = null; // null = не проверяли, true/false
   function pingHelper() {
+    if (!isMac) return Promise.resolve(false);
     return gmGet(CONFIG.alertServer + '/ping', 2500)
       .then(() => { helperOk = true; renderStats(); return true; })
       .catch(() => { helperOk = false; renderStats(); return false; });
@@ -577,6 +627,7 @@
   // Пульс сторожу: хелпер знает, когда должна быть следующая проверка,
   // и голосом зовёт человека, если чекер замолчал (вкладку заморозили/закрыли).
   function sendBeat() {
+    if (!isMac) return;
     const on = driving() ? 1 : 0;
     const nextAt = parseInt(SS.get('nextAt') || '0', 10);
     const due = on ? (nextAt || (Date.now() + RUN.intervalMaxMin * 60000)) : 0;
@@ -586,10 +637,11 @@
   }
 
   function browserFallbackAlert(kind) {
-    const text = FALLBACK_TEXT[kind] || FALLBACK_TEXT.test;
+    const pair = FALLBACK_TEXT[kind] || FALLBACK_TEXT.test;
+    const text = Array.isArray(pair) ? L(pair[0], pair[1]) : pair;
     try {
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ru-RU'; u.rate = 0.95; u.volume = 1;
+      u.lang = LANGUAGES[getLang()].ttsLang || 'en-US'; u.rate = 0.95; u.volume = 1;
       speechSynthesis.cancel(); speechSynthesis.speak(u);
     } catch (e) {}
     try { // писк через WebAudio (может молчать без клика по вкладке — политика Chrome)
@@ -602,6 +654,10 @@
   }
 
   async function fireAlert(kind, msg) {
+    if (!isMac) {
+      if (kind !== 'error') browserFallbackAlert(kind);
+      return;
+    }
     const q = '/alert?kind=' + encodeURIComponent(kind) +
       (msg ? '&msg=' + encodeURIComponent(msg) : '');
     for (let i = 0; i < 3; i++) {
@@ -655,7 +711,7 @@
     // windowMin. Проверяется первым. Если бюджет исчерпан — ждём, пока самая
     // старая проверка выпадет из окна (+джиттер). Гарантирует «≤N за окно».
     if (hitsInWindow() >= RUN.maxPerWindow) {
-      SS.set('lastGap', 'лимит окна');
+      SS.set('lastGap', L('лимит окна', 'window limit'));
       const freeAt = oldestHitInWindow() + RUN.windowMin * 60000;
       const wait = freeAt - Date.now();
       return Math.max(wait, 30000) + Math.random() * 30000;
@@ -712,9 +768,9 @@
     const at = (boostRun() || RUN.mode === 'hourly')
       ? (Date.now() + delayMs) : clampToActiveHours(Date.now() + delayMs);
     SS.set('nextAt', String(at));
-    SS.set('why', why || 'Сит нет');
+    SS.set('why', why || L('Сит нет', 'No slots'));
     waiting = true;
-    status('⏳ ' + (why || 'Жду следующую проверку'), '#ffd27f');
+    status('⏳ ' + (why || L('Жду следующую проверку', 'Waiting for next check')), '#ffd27f');
   }
   // v9.4: «назад» во время отсчёта паузы. Chrome часто отдаёт прошлую страницу
   // из кэша (bfcache): без перезагрузки boot() не выполняется, и страница
@@ -747,40 +803,25 @@
   function softFail(code, why) {
     snapOnce('fail', code + ' ' + why); // видимая ошибка страницы — снимок для разбора
     if (!driving()) {
-      status('⚠️ ' + why + ' — посмотри страницу', '#ffcc66');
+      status('⚠️ ' + why + L(' — посмотри страницу', ' — please check the page'), '#ffcc66');
       stopped = true;
       return;
     }
     // разовая проверка встретила препятствие — честно останавливаемся:
     // повтор через N минут никто не просил
-    if (onceOnly()) { SS.del('once'); checkerStop('⚠️ ' + why + ' — разовая проверка остановлена'); return; }
+    if (onceOnly()) { SS.del('once'); checkerStop('⚠️ ' + why + L(' — разовая проверка остановлена', ' — single check stopped')); return; }
     recordResult(code, currentTramite().key);
     const unknowns = getUnknowns() + 1;
     setUnknowns(unknowns);
     if (unknowns >= CONFIG.maxConsecutiveUnknown) {
-      checkerStop('⚠️ ' + why + ' (' + unknowns + ' раз подряд) — проверка остановлена', 'unknown');
+      checkerStop('⚠️ ' + why + ' (' + unknowns + L(' раз подряд) — проверка остановлена', 'x in a row) — checker stopped'), 'unknown');
     } else {
       stopped = true;
-      scheduleNext(CONFIG.unknownRetryMin * 60000, why + ' (№' + unknowns + ')');
-      fireAlert('error', why + ' (№' + unknowns + '), повтор через ' + CONFIG.unknownRetryMin + ' мин');
+      scheduleNext(CONFIG.unknownRetryMin * 60000, why + ' (#' + unknowns + ')');
+      fireAlert('error', why + ' (#' + unknowns + '), ' + L('повтор через ', 'retry in ') + CONFIG.unknownRetryMin + L(' мин', ' min'));
     }
   }
 
-  // Начать следующую проверку. Если текущий экран — часть потока проверки
-  // (экран провинции, форма #sede, развилка Cl@ve, экран заявителя без
-  // вердикта) — ОСТАЁМСЯ на месте (v8.2–8.3): tick сам поведёт проверку
-  // ВПЕРЁД. Раньше и отсюда жал Volver/replace и уводил с таких экранов
-  // НАЗАД, к форме/провинции — и требовалось второе нажатие. На экране
-  // «нет сит» приоритет — возврат кнопкой Volver (та же сессия сайта; см.
-  // комментарий у findVolverBtn); Volver недоступен — обычный перезаход
-  // страницей. Вызывается из heartbeat, onWake и кнопки «Сделать шаг».
-  // viaVolver — метка для журнала следующего вердикта (↩), volverAt —
-  // детектор «клик не перезагрузил страницу» (жив только если boot() не
-  // выполнился; nocitas-ветка тогда перепробует кнопку и уйдёт в перезаход).
-  // forceNow (v8.3) — метка «сюда пришли осознанно, веди форму сразу»:
-  // boot() на новой странице съедает её и стирает nextAt, иначе расписание
-  // прошлой проверки запрело бы tick через waiting — и после Volver форма
-  // стояла бы без движения до второго нажатия.
   function startNewCheck() {
     const onForm = !!document.querySelector('#sede');
     const onProvince = !onForm && !!document.body &&
@@ -797,16 +838,16 @@
       // Следующий тик (≤1 с) поведёт экран дальше по потоку.
       SS.del('viaVolver');
       waiting = false; stopped = false;
-      status(onForm ? '▶️ Проверяю прямо с этой формы…'
-        : onProvince ? '▶️ Проверяю с экрана провинции…'
-        : onFork ? '▶️ Проверяю с развилки Cl@ve…'
-        : '▶️ Продолжаю заполнение заявителя…');
+      status(onForm ? L('▶️ Проверяю прямо с этой формы…', '▶️ Checking directly from this form…')
+        : onProvince ? L('▶️ Проверяю с экрана провинции…', '▶️ Checking from province selection…')
+        : onFork ? L('▶️ Проверяю с развилки Cl@ve…', '▶️ Checking from Cl@ve choice…')
+        : L('▶️ Продолжаю заполнение заявителя…', '▶️ Continuing applicant form…'));
       return;
     }
     if (driving() && !recently('volver', 4000) && verdict) {
       const v = findVolverBtn();
       if (v) {
-        status('↩️ Возвращаюсь к поиску сит (Volver)…');
+        status(L('↩️ Возвращаюсь к поиску сит (Volver)…', '↩️ Returning to search (Volver)…'));
         SS.set('viaVolver', '1');
         SS.set('volverAt', String(Date.now()));
         SS.set('forceNow', '1'); // новая страница поведёт форму сразу, без ритма
@@ -816,7 +857,7 @@
       // вердикт на экране, а кнопку не нашли — перезаход; в журнале будет ↪,
       // чтобы причина была видна без смотреть на экран
       SS.set('volverMiss', '1');
-      status('↩️ Volver не нашёл на этом экране — перезаход страницей…', '#ffd27f');
+      status(L('↩️ Volver не нашёл на этом экране — перезаход страницей…', '↩️ Volver not found on this screen — reloading start page…'), '#ffd27f');
     }
     SS.del('viaVolver');
     SS.set('forceNow', '1'); // и после перезахода — вести форму без ожидания ритма
@@ -830,13 +871,13 @@
     // а строка статуса занята жёлтым «выключи перевод»: испанские надписи
     // скрипт всё равно не читает. Выключат перевод — статусы вернутся сами.
     if (pageTranslated()) {
-      status('🌐 Перевод страницы включён — выключи его: скрипт читает испанские надписи', '#ffd27f');
+      status(L('🌐 Перевод страницы включён — выключи его: скрипт читает испанские надписи', '🌐 Page translation is ON — turn it off (script reads Spanish labels)'), '#ffd27f');
       wasTranslated = true;
       return;
     }
     if (wasTranslated) {
       wasTranslated = false;
-      status('🌐 Перевод выключен — снова вижу экраны сайта', '#8fd498');
+      status(L('🌐 Перевод выключен — снова вижу экраны сайта', '🌐 Page translation turned off — reading site screens again'), '#8fd498');
     }
     if (!driving()) return;
     const nextAt = parseInt(SS.get('nextAt') || '0', 10);
@@ -849,7 +890,7 @@
       // пробуем снова каждые 10 секунд, пока страница не перезагрузится.
       // Новая загрузка страницы сама очистит устаревший nextAt (см. boot).
       if (!recently('cycleReload', 10000)) {
-        status('🔄 Начинаю следующую проверку…');
+        status(L('🔄 Начинаю следующую проверку…', '🔄 Starting next check…'));
         startNewCheck();
       }
       return;
@@ -858,14 +899,14 @@
       // долгая пауза (ночь) — показываем время, а не пугающий отсчёт
       const at = new Date(nextAt);
       const hhmm = String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0');
-      status('💤 Ночная пауза. Следующая проверка в ' + hhmm, '#ffd27f');
-      document.title = '💤 до ' + hhmm + ' — cita checker';
+      status(L('💤 Ночная пауза. Следующая проверка в ', '💤 Night pause. Next check at ') + hhmm, '#ffd27f');
+      document.title = L('💤 до ', '💤 until ') + hhmm + ' — cita checker';
       return;
     }
     const mm = Math.floor(left / 60000);
     const ss = Math.floor((left % 60000) / 1000);
     const t = mm + ':' + String(ss).padStart(2, '0');
-    status('⏳ ' + (SS.get('why') || 'Сит нет') + '. Следующая проверка через ' + t, '#ffd27f');
+    status('⏳ ' + (SS.get('why') || L('Сит нет', 'No slots')) + L('. Следующая проверка через ', '. Next check in ') + t, '#ffd27f');
     document.title = '⏳ ' + t + ' — cita checker';
   }
 
@@ -881,26 +922,29 @@
   function renderState() {
     if (stateEl) {
       let txt, color;
-      if (foundMode()) { txt = '● СИТЫ НАЙДЕНЫ — доделываем вместе'; color = '#7CFC00'; }
-      else if (stepMode()) { txt = '● Пошаговый режим — ритм заморожен'; color = '#e67e22'; }
-      else if (boostRun()) { txt = '● Форсаж: каждые ' + RUN.boostSec + ' сек'; color = '#e67e22'; }
-      else if (rhythmOn()) { txt = '● Ритмичная проверка идёт'; color = '#7CFC00'; }
-      else if (onceMode()) { txt = '● Разовая проверка…'; color = '#2980b9'; }
-      else { txt = '● Проверка выключена'; color = '#ff8888'; }
+      if (foundMode()) { txt = L('● СИТЫ НАЙДЕНЫ — доделываем вместе', '● SLOTS FOUND — finishing together'); color = '#7CFC00'; }
+      else if (stepMode()) { txt = L('● Пошаговый режим — ритм заморожен', '● Step-by-step mode — rhythm paused'); color = '#e67e22'; }
+      else if (boostRun()) { txt = L('● Форсаж: каждые ' + RUN.boostSec + ' сек', '● Boost mode: every ' + RUN.boostSec + ' sec'); color = '#e67e22'; }
+      else if (rhythmOn()) { txt = L('● Ритмичная проверка идёт', '● Automatic check running'); color = '#7CFC00'; }
+      else if (onceMode()) { txt = L('● Разовая проверка…', '● Single check running…'); color = '#2980b9'; }
+      else { txt = L('● Проверка выключена', '● Checker is OFF'); color = '#ff8888'; }
       stateEl.textContent = txt;
       stateEl.style.color = color;
     }
     if (runBtn) {
       const on = rhythmOn() || boostRun(); // v9.3: стоп виден и когда цикл идёт форсажным темпом
-      runBtn.textContent = on ? 'Остановить проверку' : 'Запустить проверку';
+      runBtn.textContent = on ? L('Остановить проверку', 'Stop Checking') : L('Запустить проверку', 'Start Checking');
       runBtn.style.background = on ? '#a93226' : '#2980b9';
     }
     if (boostCapEl) boostCapEl.style.display = (rhythmOn() && boostMode()) ? 'block' : 'none';
     if (boostLabelEl)
-      boostLabelEl.textContent = 'Форсаж — ускоренная проверка каждые ' + RUN.boostSec + ' сек (интервал — в настройках форсажа)';
+      boostLabelEl.textContent = L(
+        'Форсаж — ускоренная проверка каждые ' + RUN.boostSec + ' сек (интервал — в настройках форсажа)',
+        'Boost — fast check every ' + RUN.boostSec + ' sec (interval in Boost settings)'
+      );
     if (stepToggle) {
       const s = stepMode();
-      stepToggle.textContent = s ? 'Выключить пошаговый режим' : 'Включить пошаговый режим';
+      stepToggle.textContent = s ? L('Выключить пошаговый режим', 'Disable Step-by-Step Mode') : L('Включить пошаговый режим', 'Enable Step-by-Step Mode');
       stepToggle.style.background = s ? '#a93226' : '#2980b9';
       if (stepGoBtn) stepGoBtn.style.display = s ? 'block' : 'none';
     }
@@ -909,16 +953,16 @@
     if (statsEl) {
       const last = lastResult();
       const lastTxt = last
-        ? new Date(last.t).toTimeString().slice(0, 5) + ' ' + (LOG_LABELS[last.s] ? LOG_LABELS[last.s][1] : last.s)
+        ? new Date(last.t).toTimeString().slice(0, 5) + ' ' + logLabelText(last.s)
         : '—';
       statsEl.textContent =
-        'сегодня: ' + todayCount() + ' (блоков: ' + todayBlocks() + ') | последняя: ' + lastTxt;
+        L('сегодня: ', 'today: ') + todayCount() + L(' (блоков: ', ' (blocks: ') + todayBlocks() + L(') | последняя: ', ') | last: ') + lastTxt;
     }
     if (settingsLineEl) {
       const helper = helperOk === null ? '⚪️' : helperOk ? '🟢' : '🔴';
       // v9.2: без офиса (выбран селектором выше), без версии (переехала в
       // приписку внизу) и без «форсаж» (виден строкой режима и галочкой)
-      settingsLineEl.textContent = settingsSummary(false) + ' · голос: ' + helper;
+      settingsLineEl.textContent = settingsSummary(false) + L(' · голос: ', ' · voice: ') + helper;
     }
     renderState();
   }
@@ -950,6 +994,41 @@
       'font:13px/1.4 system-ui,sans-serif;padding:10px 12px;border-radius:8px;' +
       'box-shadow:0 2px 10px rgba(0,0,0,.5);max-width:330px;' + // шире, чтобы строка журнала «ДД.ММ ЧЧ:ММ · сит нет: huellas, форма» влезала без переноса
       'max-height:92vh;overflow-y:auto'; // прокрутка — чтобы «Сохранить» всегда был виден
+
+    // Переключатель языка (EN по умолчанию, RU и др. из LANGUAGES)
+    const langBar = document.createElement('div');
+    langBar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;' +
+      'margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #333;font-size:11px;color:#bbb';
+    const langLabel = document.createElement('span');
+    langLabel.textContent = '🌐 Language / Язык:';
+    const langSel = document.createElement('select');
+    langSel.style.cssText = 'padding:2px 6px;border:1px solid #444;border-radius:4px;' +
+      'background:#222;color:#fff;font:11px system-ui,sans-serif;cursor:pointer';
+    for (const [code, info] of Object.entries(LANGUAGES)) {
+      const op = document.createElement('option');
+      op.value = code;
+      op.textContent = info.label;
+      if (code === getLang()) op.selected = true;
+      langSel.appendChild(op);
+    }
+    langSel.onchange = () => {
+      DATA.lang = langSel.value;
+      persistData();
+      box.remove();
+      panel();
+      if (!driving() && !foundMode()) {
+        if (document.querySelector('#sede')) {
+          status(L('📡 Проверка выключена — страницу не трогаю', '📡 Checker is OFF — leaving page untouched'), '#bbb');
+        } else if (onNoCitasVerdict()) {
+          status(L('🔁 Сейчас сит нет — жми «Проверить сейчас» или запусти ритм', '🔁 No slots right now — click "Check Now" or "Start Checking"'), '#ffd27f');
+        }
+      }
+      heartbeat();
+    };
+    langBar.appendChild(langLabel);
+    langBar.appendChild(langSel);
+    box.appendChild(langBar);
+
     // v9.2: наверху — строка активности (бывшая «вторая») и статистика;
     // приписка «кто что делает» с версией — внизу панели (как до 9.2).
     // Строка режима (●) живёт в секции «Ритмичная проверка».
@@ -1001,7 +1080,7 @@
     }
 
     // ---- секция «Офисы, которые проверяем» ----
-    box.appendChild(sectionTitle('Офисы, которые проверяем'));
+    box.appendChild(sectionTitle(L('Офисы, которые проверяем', 'Offices to Check')));
 
     // v9.22: вместо селекта — галочки (просьба тестера: искать Cualquier,
     // а бронировать только свои). Режим поиска зависит от числа отмеченных:
@@ -1022,10 +1101,10 @@
     officeToggles.style.cssText = 'margin-top:6px;font-size:11px';
     const allLinkCss = 'color:#6db3f2;cursor:pointer;text-decoration:underline;margin-right:12px';
     const officeAllLink = document.createElement('span');
-    officeAllLink.textContent = 'Выбрать все';
+    officeAllLink.textContent = L('Выбрать все', 'Select all');
     officeAllLink.style.cssText = allLinkCss;
     const officeNoneLink = document.createElement('span');
-    officeNoneLink.textContent = 'Снять все';
+    officeNoneLink.textContent = L('Снять все', 'Clear all');
     officeNoneLink.style.cssText = allLinkCss;
     officeToggles.appendChild(officeAllLink);
     officeToggles.appendChild(officeNoneLink);
@@ -1063,7 +1142,7 @@
     anyCb.checked = !!DATA.officeAny;
     anyCb.style.cssText = 'margin:1px 0 0';
     anyRow.appendChild(anyCb);
-    anyRow.appendChild(document.createTextNode('Если выбранных офисов нет — брать любой'));
+    anyRow.appendChild(document.createTextNode(L('Если выбранных офисов нет — брать любой', 'If selected offices have no slots — take any')));
     officeDetails.appendChild(anyRow);
     function renderAnyRow() {
       anyRow.style.display = selectedOffices().length >= 2 ? 'flex' : 'none';
@@ -1103,10 +1182,10 @@
     // блоков нет), страница после Volver ведёт форму сразу (forceNow).
     // Нажатие — явное «работай сейчас»: снимаем пошаговый режим,
     // иначе tick остался бы заперт и кнопка молча не делала бы ничего.
-    const nowBtn = mkBtn('Проверить сейчас', '#16a085');
+    const nowBtn = mkBtn(L('Проверить сейчас', 'Check Now'), '#16a085');
     nowBtn.onclick = () => {
       if (!dataReady()) {
-        status('⚙️ Сначала заполни свои данные', '#ffcc66');
+        status(L('⚙️ Сначала заполни свои данные', '⚙️ Please fill in your personal details first'), '#ffcc66');
         openOnly(settingsForm);
         return;
       }
@@ -1128,20 +1207,20 @@
     box.appendChild(nowBtn);
 
     // ---- секция «Ритмичная проверка» ----
-    box.appendChild(sectionTitle('Ритмичная проверка'));
+    box.appendChild(sectionTitle(L('Ритмичная проверка', 'Automatic Checking')));
     // v9.2: строка режима (●) живёт тут — над кнопкой старт/стоп. Выжимки
     // настроек темпа больше нет: всё читается в «Настроить ритм».
     stateEl = document.createElement('div');
     stateEl.style.cssText = 'font-size:11px;font-weight:600;margin-top:2px';
     box.appendChild(stateEl);
-    runBtn = mkBtn('Запустить проверку', '#2980b9');
+    runBtn = mkBtn(L('Запустить проверку', 'Start Checking'), '#2980b9');
     runBtn.onclick = () => {
       // v9.3: останавливает ЛЮБОЙ бесконечный цикл — ритм или форсаж
       if (rhythmOn() || boostRun()) {
-        checkerStop('⏹ Проверка остановлена'); // полная тишина: ритм, форсаж, разовая
+        checkerStop(L('⏹ Проверка остановлена', '⏹ Checking stopped')); // полная тишина: ритм, форсаж, разовая
         stopAlertLoop();
       } else if (!dataReady()) {
-        status('⚙️ Сначала заполни свои данные', '#ffcc66');
+        status(L('⚙️ Сначала заполни свои данные', '⚙️ Please fill in your personal details first'), '#ffcc66');
         openOnly(settingsForm);
       } else {
         const start = /\/citar\?p=/.test(location.href) ? location.href : DEFAULT_START;
@@ -1179,14 +1258,14 @@
           SS.set('boostRun', '1');
           SS.del('nextAt');
           waiting = false; stopped = false;
-          status('🔥 Форсаж: проверяю каждые ' + RUN.boostSec + ' сек (ритм на паузе)', '#ffd27f');
+          status(L('🔥 Форсаж: проверяю каждые ' + RUN.boostSec + ' сек (ритм на паузе)', '🔥 Boost: checking every ' + RUN.boostSec + ' sec (rhythm paused)'), '#ffd27f');
         } else {
-          status('🔥 Форсаж: каждые ' + RUN.boostSec + ' сек — так будет ходить «Запустить проверку»', '#ffd27f');
+          status(L('🔥 Форсаж: каждые ' + RUN.boostSec + ' сек — так будет ходить «Запустить проверку»', '🔥 Boost: every ' + RUN.boostSec + ' sec — will apply to "Start Checking"'), '#ffd27f');
         }
       } else {
         SS.del('boost'); SS.del('boostRun');
         if (rhythmOn() && (waiting || stopped)) // ритм возвращается к своему темпу
-          scheduleNext(jitteredDelayMs(), 'Ритм возобновлён');
+          scheduleNext(jitteredDelayMs(), L('Ритм возобновлён', 'Rhythm resumed'));
       }
       renderState();
     };
@@ -1195,44 +1274,44 @@
     // подпись: ритм формально идёт, но его темп подменён форсажем
     boostCapEl = document.createElement('div');
     boostCapEl.style.cssText = 'display:none;margin-top:4px;font-size:11px;color:#ffd27f';
-    boostCapEl.textContent = 'Ритмичная проверка на паузе из-за режима форсаж';
+    boostCapEl.textContent = L('Ритмичная проверка на паузе из-за режима форсаж', 'Normal rhythm is paused while Boost mode is active');
     box.appendChild(boostCapEl);
 
-    const boostOpenBtn = mkBtn('Настройки форсажа', '#7f8c8d');
+    const boostOpenBtn = mkBtn(L('Настройки форсажа', 'Boost Settings'), '#7f8c8d');
     boostOpenBtn.onclick = () => toggleSettings(boostForm);
     box.appendChild(boostOpenBtn);
     box.appendChild(boostForm);
 
-    const rhythmOpenBtn = mkBtn('Настроить ритм проверки', '#7f8c8d');
+    const rhythmOpenBtn = mkBtn(L('Настроить ритм проверки', 'Configure Check Rhythm'), '#7f8c8d');
     rhythmOpenBtn.onclick = () => { fillRhythmInputs(); toggleSettings(rhythmForm); };
     box.appendChild(rhythmOpenBtn);
     box.appendChild(rhythmForm); // v9.2: форма открывается прямо под своей кнопкой
 
     // ---- секция «Общие настройки» ----
-    box.appendChild(sectionTitle('Общие настройки'));
+    box.appendChild(sectionTitle(L('Общие настройки', 'General Settings')));
     settingsLineEl = document.createElement('div');
     settingsLineEl.style.cssText = 'font-size:11px;color:#fff;margin-bottom:2px;white-space:pre-line'; // v9.2: явный белый, не серый
     box.appendChild(settingsLineEl);
 
-    const searchBtn = mkBtn('Изменить настройки поиска', '#7f8c8d');
+    const searchBtn = mkBtn(L('Изменить настройки поиска', 'Edit Search Settings'), '#7f8c8d');
     searchBtn.onclick = () => toggleSettings(searchForm);
     box.appendChild(searchBtn);
     box.appendChild(searchForm); // v9.2: аккордеон — форма под своей кнопкой
-    const dataBtn = mkBtn('Изменить мои данные', '#7f8c8d');
+    const dataBtn = mkBtn(L('Изменить мои данные', 'Edit My Personal Details'), '#7f8c8d');
     dataBtn.onclick = () => toggleSettings(settingsForm);
     box.appendChild(dataBtn);
     box.appendChild(settingsForm); // v9.2: аккордеон — форма под своей кнопкой
 
     // Пошаговый режим (v9.0 — с главной панели): замораживает ритм, как форсаж;
     // ✋-паузы больше нет — «не трогай сайт» это и есть пошаговый
-    stepToggle = mkBtn('Включить пошаговый режим', '#2980b9');
+    stepToggle = mkBtn(L('Включить пошаговый режим', 'Enable Step-by-Step Mode'), '#2980b9');
     stepToggle.onclick = () => {
       if (stepMode()) { SS.del('step'); fillStepQueue = null; } // выход из пошагового — очередь не нужна
-      else { SS.set('step', '1'); status('👣 Пошагово: ритм заморожен — жми «Следующий шаг»', '#ffd27f'); }
+      else { SS.set('step', '1'); status(L('👣 Пошагово: ритм заморожен — жми «Следующий шаг»', '👣 Step-by-step: rhythm paused — click "Next Step"'), '#ffd27f'); }
       renderState();
     };
     box.appendChild(stepToggle);
-    stepGoBtn = mkBtn('Следующий шаг', '#e67e22');
+    stepGoBtn = mkBtn(L('Следующий шаг', 'Next Step'), '#e67e22');
     stepGoBtn.onclick = () => {
       stopped = false; waiting = false;
       const nextAt = parseInt(SS.get('nextAt') || '0', 10);
@@ -1242,8 +1321,8 @@
       if (fillStepQueue && fillStepQueue.length) {
         fillStepQueue.shift()();
         status(fillStepQueue.length
-          ? '👣 Шаг сделан — ещё ' + fillStepQueue.length + ' (жми «Следующий шаг»)'
-          : '👣 Последний шаг заполнения', '#ffd27f');
+          ? L('👣 Шаг сделан — ещё ' + fillStepQueue.length + ' (жми «Следующий шаг»)', '👣 Step done — ' + fillStepQueue.length + ' left (click "Next Step")')
+          : L('👣 Последний шаг заполнения', '👣 Final filling step done'), '#ffd27f');
         return;
       }
       forcingStep = true;
@@ -1253,13 +1332,13 @@
 
     // На страницу выбора офиса: смена офиса/услуги руками (настройки действуют
     // на НОВУЮ проверку, уже открытую форму они не меняют)
-    const firstBtn = mkBtn('Перейти на страницу выбора офиса', '#16a085');
+    const firstBtn = mkBtn(L('Перейти на страницу выбора офиса', 'Go to Office Selection Page'), '#16a085');
     firstBtn.onclick = () => {
       location.replace(SS.get('startUrl') || DEFAULT_START);
     };
     box.appendChild(firstBtn);
 
-    const testBtn = mkBtn('Проверить голосовое оповещение', '#b9770e');
+    const testBtn = mkBtn(L('Проверить голосовое оповещение', 'Test Voice Alert'), '#b9770e');
     testBtn.onclick = () => fireAlert('test');
     box.appendChild(testBtn);
 
@@ -1301,12 +1380,12 @@
       return sel;
     }
     const fields = [
-      ['docType', 'Документ'],
-      ['docNumber', 'Номер документа'],
-      ['fullName', 'Имя и фамилия как в документе'],
-      ['birthYear', 'Год рождения'],
-      ['country', 'Страна (как в списке сайта)'],
-      ['phone', 'Телефон (без +34)'],
+      ['docType', L('Документ', 'Document Type')],
+      ['docNumber', L('Номер документа', 'Document Number')],
+      ['fullName', L('Имя и фамилия как в документе', 'Full Name (as on document)')],
+      ['birthYear', L('Год рождения', 'Year of Birth')],
+      ['country', L('Страна (как в списке сайта)', 'Country (in Spanish as in site dropdown)')],
+      ['phone', L('Телефон (без +34)', 'Phone (9 digits, without +34)')],
       ['email', 'Email'],
     ];
     const inputs = {};
@@ -1316,7 +1395,7 @@
             (DATA.docType || 'NIE') === 'PASSPORT' ? 'PASSPORT' : 'NIE')
         : mkField(settingsForm, label, DATA[key] || ''); // v9.2: подпись над полем
     }
-    const saveDataBtn = mkBtn('Сохранить данные', '#27ae60');
+    const saveDataBtn = mkBtn(L('Сохранить данные', 'Save Personal Details'), '#27ae60');
     // v9.3: активна, только когда хоть одно поле разошлось с сохранёнными
     // данными (docType сравниваем в той же нормализации, что и сохранение)
     const normDocType = (v) => ((v || 'NIE').toUpperCase() === 'PASSPORT' ? 'PASSPORT' : 'NIE');
@@ -1337,7 +1416,7 @@
       store.set('ck_data', JSON.stringify(DATA));
       updateSaveDataBtn(); // поля = данные → кнопка гаснет
       settingsForm.style.display = 'none';
-      status(dataReady() ? '✅ Данные сохранены' : '⚙️ Не все поля заполнены', dataReady() ? '#7CFC00' : '#ffcc66');
+      status(dataReady() ? L('⚙️ Данные сохранены', '✅ Personal details saved').replace('⚙️', '✅') : L('⚙️ Не все поля заполнены', '⚙️ Not all required fields are filled'), dataReady() ? '#7CFC00' : '#ffcc66');
       renderStats();
     };
     settingsForm.appendChild(saveDataBtn);
@@ -1346,7 +1425,7 @@
     // какие услуги проверять (раздел «Настройки поиска»)
     const tramTitle = document.createElement('div');
     tramTitle.style.cssText = 'margin-top:7px;font-size:11px;color:#fff';
-    tramTitle.textContent = 'Какие услуги проверять:';
+    tramTitle.textContent = L('Какие услуги проверять:', 'Services to check:');
     searchForm.appendChild(tramTitle);
     const tramChecks = {};
     for (const t of TRAMITES) {
@@ -1358,7 +1437,7 @@
       cb.style.cssText = 'margin:1px 0 0';
       tramChecks[t.key] = cb;
       row.appendChild(cb);
-      row.appendChild(document.createTextNode(t.label));
+      row.appendChild(document.createTextNode(L(t.label, t.labelEn || t.label)));
       searchForm.appendChild(row);
     }
 
@@ -1374,7 +1453,7 @@
     sinClaveRadio.checked = !DATA.useClave;
     sinClaveRadio.style.cssText = 'margin:1px 0 0';
     sinClaveRow.appendChild(sinClaveRadio);
-    sinClaveRow.appendChild(document.createTextNode('Без Cl@ve'));
+    sinClaveRow.appendChild(document.createTextNode(L('Без Cl@ve', 'Without Cl@ve (Sin Cl@ve)')));
     searchForm.appendChild(sinClaveRow);
 
     const claveRow = document.createElement('label');
@@ -1385,7 +1464,7 @@
     claveRadio.checked = !!DATA.useClave;
     claveRadio.style.cssText = 'margin:1px 0 0';
     claveRow.appendChild(claveRadio);
-    claveRow.appendChild(document.createTextNode('Через Cl@ve (сайт обещает лучший доступ)'));
+    claveRow.appendChild(document.createTextNode(L('Через Cl@ve (сайт обещает лучший доступ)', 'Via Cl@ve (site offers better access)')));
     searchForm.appendChild(claveRow);
 
     const certRow = document.createElement('label');
@@ -1395,11 +1474,11 @@
     certCb.checked = !!DATA.claveCert;
     certCb.style.cssText = 'margin:1px 0 0';
     certRow.appendChild(certCb);
-    certRow.appendChild(document.createTextNode('Сертификатом в Chrome (eIdentifier)'));
+    certRow.appendChild(document.createTextNode(L('Сертификатом в Chrome (eIdentifier)', 'With Digital Certificate in Chrome (eIdentifier)')));
     searchForm.appendChild(certRow);
     const certHint = document.createElement('div');
     certHint.style.cssText = 'margin:2px 0 0;font-size:10px;line-height:1.3;color:#fff';
-    certHint.textContent = 'Сняли галочку — другой способ появится после завершения сессии Chrome.';
+    certHint.textContent = L('Сняли галочку — другой способ появится после завершения сессии Chrome.', 'If unchecked, another login method appears after the Chrome session ends.');
     searchForm.appendChild(certHint);
     // Кому записываемся (только при Cl@ve). Идея и первая реализация — PR #2
     // (Konstantin Chukreev); у нас выбор оформлен двумя пунктами вместо галочки.
@@ -1408,7 +1487,7 @@
     // заявителя вписываем из «Моих данных».
     const applicantTitle = document.createElement('div');
     applicantTitle.style.cssText = 'margin-top:6px;font-size:11px;color:#fff';
-    applicantTitle.textContent = 'Кому записываемся:';
+    applicantTitle.textContent = L('Кому записываемся:', 'Booking appointment for:');
     searchForm.appendChild(applicantTitle);
     const selfRow = document.createElement('label');
     selfRow.style.cssText = checkRowCss + ';color:#fff';
@@ -1418,7 +1497,7 @@
     selfRadio.checked = DATA.copyFromClave !== false;
     selfRadio.style.cssText = 'margin:1px 0 0';
     selfRow.appendChild(selfRadio);
-    selfRow.appendChild(document.createTextNode('Себе (владелец Cl@ve)'));
+    selfRow.appendChild(document.createTextNode(L('Себе (владелец Cl@ve)', 'Myself (Cl@ve owner)')));
     searchForm.appendChild(selfRow);
     const otherRow = document.createElement('label');
     otherRow.style.cssText = checkRowCss + ';color:#fff';
@@ -1428,11 +1507,11 @@
     otherRadio.checked = DATA.copyFromClave === false;
     otherRadio.style.cssText = 'margin:1px 0 0';
     otherRow.appendChild(otherRadio);
-    otherRow.appendChild(document.createTextNode('Другому человеку (из «Мои данные»)'));
+    otherRow.appendChild(document.createTextNode(L('Другому человеку (из «Мои данные»)', 'Another person (from "My Personal Details")')));
     searchForm.appendChild(otherRow);
     const applicantHint = document.createElement('div');
     applicantHint.style.cssText = 'margin:2px 0 0;font-size:10px;line-height:1.3;color:#fff';
-    applicantHint.textContent = 'Данные заявителя скрипт возьмёт из «👤 Изменить мои данные».';
+    applicantHint.textContent = L('Данные заявителя скрипт возьмёт из «👤 Изменить мои данные».', 'Applicant details will be filled from "Edit My Personal Details".');
     searchForm.appendChild(applicantHint);
     function renderApplicantHint() {
       applicantHint.style.display = (claveRadio.checked && otherRadio.checked) ? 'block' : 'none';
@@ -1449,7 +1528,7 @@
     }
     renderClaveControls();
 
-    const saveSearchBtn = mkBtn('Сохранить настройки', '#27ae60');
+    const saveSearchBtn = mkBtn(L('Сохранить настройки', 'Save Search Settings'), '#27ae60');
     // v9.3: активна, только когда хоть одна галочка разошлась с сохранёнными
     function searchDirty() {
       for (const t of TRAMITES)
@@ -1478,7 +1557,7 @@
       updateSaveSearchBtn(); // галочки = данные → кнопка гаснет
       SS.del('tramIdx'); // начать чередование с первой отмеченной
       searchForm.style.display = 'none';
-      status('✅ Настройки поиска сохранены', '#7CFC00');
+      status(L('✅ Настройки поиска сохранены', '✅ Search settings saved'), '#7CFC00');
       renderStats();
     };
     searchForm.appendChild(saveSearchBtn);
@@ -1497,18 +1576,18 @@
     const rhythmInputs = {};
     const modeTitle = document.createElement('div');
     modeTitle.style.cssText = 'margin-top:6px;font-size:11px;color:#fff';
-    modeTitle.textContent = 'Способ планировать проверки:';
+    modeTitle.textContent = L('Способ планировать проверки:', 'Check scheduling mode:');
     rhythmForm.appendChild(modeTitle);
     const modeSel = document.createElement('select');
     modeSel.style.cssText = inputCss;
-    for (const [value, text] of [['interval', 'Интервальный ритм'], ['hourly', 'Часовые окна']]) {
+    for (const [value, text] of [['interval', L('Интервальный ритм', 'Interval rhythm')], ['hourly', L('Часовые окна', 'Hourly windows')]]) {
       const op = document.createElement('option'); op.value = value; op.textContent = text; modeSel.appendChild(op);
     }
     rhythmForm.appendChild(modeSel);
 
     const presetTitle = document.createElement('div');
     presetTitle.style.cssText = 'margin-top:6px;font-size:11px;color:#fff';
-    presetTitle.textContent = 'Пресет ритма (выбор применяется сразу):';
+    presetTitle.textContent = L('Пресет ритма (выбор применяется сразу):', 'Rhythm preset (applies immediately):');
     rhythmForm.appendChild(presetTitle);
     const presetSel = document.createElement('select');
     presetSel.style.cssText = inputCss;
@@ -1522,39 +1601,39 @@
         if ((p.mode || 'interval') !== modeSel.value) continue;
         const op = document.createElement('option');
         op.value = name;
-        op.textContent = (BUILTIN_PRESETS[name] ? '★ ' : '') + name;
+        op.textContent = (BUILTIN_PRESETS[name] ? '★ ' : '') + presetDisplay(name);
         presetSel.appendChild(op);
       }
       const own = document.createElement('option');
       own.value = '(свои)';
-      own.textContent = '✎ (свои значения)';
+      own.textContent = L('✎ (свои значения)', '✎ (custom values)');
       presetSel.appendChild(own);
       presetSel.value = RUN.preset || '(свои)';
       if (presetSel.value !== (RUN.preset || '(свои)')) presetSel.value = '(свои)';
     }
     presetSel.onchange = () => {
       if (presetSel.value === '(свои)') {
-        status('✎ Свои значения — правь поля ниже и нажми «Сохранить изменения»', '#bbb');
+        status(L('✎ Свои значения — правь поля ниже и нажми «Сохранить изменения»', '✎ Custom values — edit fields below and click "Save Changes"'), '#bbb');
         return;
       }
       if (applyPreset(presetSel.value)) {
         fillRhythmInputs(); // цифры полей = пресет
-        status('✅ Пресет «' + RUN.preset + '» включён', '#7CFC00');
+        status(L('✅ Пресет «' + RUN.preset + '» включён', '✅ Preset "' + presetDisplay(RUN.preset) + '" enabled'), '#7CFC00');
         renderStats();
       }
     };
 
     // Поля активной стратегии показываются, остальные скрываются.
     const RHYTHM_FIELDS = [
-      ['hourlyWindowMin', 'Часовое окно, мин (1–55)'],
-      ['hourlyChecks', 'Проверок в окне (1–20; хаотично)'],
-      ['intervalRange', 'Интервал, мин (напр. 7 или 7–10)'],
-      ['hotHours', 'Горячие часы (необязательно, напр. 6-13)'],
-      ['hotIntervalRange', 'Интервал горячих часов, сек (напр. 60 или 60–180)'],
-      ['activeHoursRange', 'Время работы проверки (0–24 = всё время)'],
-      ['maxPerWindow', 'Макс. проверок за окно'],
-      ['windowMin', 'Длина окна, мин'],
-      ['lostRetryRange', 'После срыва слотов — перепроверка, сек (напр. 5 или 5–12)'],
+      ['hourlyWindowMin', L('Часовое окно, мин (1–55)', 'Hourly window, min (1–55)')],
+      ['hourlyChecks', L('Проверок в окне (1–20; хаотично)', 'Checks in window (1–20; random)')],
+      ['intervalRange', L('Интервал, мин (напр. 7 или 7–10)', 'Interval, min (e.g. 7 or 7–10)')],
+      ['hotHours', L('Горячие часы (необязательно, напр. 6-13)', 'Peak hours (optional, e.g. 6-13)')],
+      ['hotIntervalRange', L('Интервал горячих часов, сек (напр. 60 или 60–180)', 'Peak hours interval, sec (e.g. 60 or 60–180)')],
+      ['activeHoursRange', L('Время работы проверки (0–24 = всё время)', 'Active hours (0–24 = 24/7)')],
+      ['maxPerWindow', L('Макс. проверок за окно', 'Max checks per window')],
+      ['windowMin', L('Длина окна, мин', 'Window length, min')],
+      ['lostRetryRange', L('После срыва слотов — перепроверка, сек (напр. 5 или 5–12)', 'Retry after lost slots, sec (e.g. 5 or 5–12)')],
     ];
     function mkRhythmField(form, labelText, value) {
       const row = document.createElement('div');
@@ -1575,7 +1654,7 @@
       if (key === 'maxPerWindow') {
         const protectionTitle = document.createElement('div');
         protectionTitle.style.cssText = 'margin-top:10px;padding-top:7px;border-top:1px solid #333;font-size:11px;color:#fff';
-        protectionTitle.textContent = 'Темп и паузы';
+        protectionTitle.textContent = L('Темп и паузы', 'Pace & limits');
         rhythmForm.appendChild(protectionTitle);
       }
       rhythmInputs[key] = mkRhythmField(rhythmForm, label, String(RUN[key]));
@@ -1693,7 +1772,7 @@
     // v9.2: «Сохранить изменения» (бывш. «Сохранить ритм»): активна только
     // когда хоть одно поле разошлось с текущим ритмом (RUN) — жать нечего,
     // пока ничего не менялось. Погашена — полупрозрачная и не кликается.
-    const saveRhythmBtn = mkBtn('Сохранить изменения', '#27ae60');
+    const saveRhythmBtn = mkBtn(L('Сохранить изменения', 'Save Changes'), '#27ae60');
     function rhythmDirty() {
       if (modeSel.value !== RUN.mode) return true;
       for (const [key] of RHYTHM_FIELDS) {
@@ -1733,7 +1812,7 @@
     // общая команда для верхней (под форсажем) и нижней кнопки сохранения
     function saveRhythmChanges() {
       const v = collectRhythm();
-      if (!v) { status('⚠️ Проверь поля ритма (часы пишут как «6-13, 19-23»)', '#ff8888'); return; }
+      if (!v) { status(L('⚠️ Проверь поля ритма (часы пишут как «6-13, 19-23»)', '⚠️ Check rhythm fields (write hours like "6-13, 19-23")'), '#ff8888'); return; }
       // v9.2: пресет в списке ещё выбран и цифры ему соответствуют — сохраняем
       // с его именем; любая правка отвалилась на «(свои)» — так и пишем
       const keep = (presetSel.value !== '(свои)' && matchesSelectedPreset()) ? presetSel.value : '(свои)';
@@ -1741,15 +1820,17 @@
       SS.del('boostUntil'); // v9.0: ключ авто-форсажа протух — подчистить
       store.set('ck_run', JSON.stringify(RUN));
       fillRhythmInputs();
-      status(keep !== '(свои)' ? '✅ Изменения сохранены — пресет «' + keep + '»' : '✅ Изменения сохранены (свои значения)', '#7CFC00');
+      status(keep !== '(свои)'
+        ? L('✅ Изменения сохранены — пресет «' + keep + '»', '✅ Changes saved — preset "' + presetDisplay(keep) + '"')
+        : L('✅ Изменения сохранены (свои значения)', '✅ Changes saved (custom values)'), '#7CFC00');
       renderStats();
     }
     saveRhythmBtn.onclick = saveRhythmChanges;
     rhythmForm.appendChild(saveRhythmBtn);
     rhythmForm.appendChild(formDivider()); // делит «Сохранить изменения» и блок своего пресета
 
-    const presetNameInp = mkField(rhythmForm, 'Имя для своего пресета', ''); // v9.2: подпись над полем
-    const savePresetBtn = mkBtn('Сохранить как пресет', '#27ae60');
+    const presetNameInp = mkField(rhythmForm, L('Имя для своего пресета', 'Custom preset name'), ''); // v9.2: подпись над полем
+    const savePresetBtn = mkBtn(L('Сохранить как пресет', 'Save as Preset'), '#27ae60');
     // v9.3: активна, только когда введено имя (цифры могут и совпадать — новое
     // имя и есть то, что сохраняем)
     function updateSavePresetBtn() { setDim(savePresetBtn, !presetNameInp.value.trim()); }
@@ -1757,10 +1838,10 @@
     updateSavePresetBtn(); // при создании: имя пустое — погашена
     savePresetBtn.onclick = () => {
       const v = collectRhythm();
-      if (!v) { status('⚠️ Проверь поля ритма (часы пишут как «6-13, 19-23»)', '#ff8888'); return; }
+      if (!v) { status(L('⚠️ Проверь поля ритма (часы пишут как «6-13, 19-23»)', '⚠️ Check rhythm fields (write hours like "6-13, 19-23")'), '#ff8888'); return; }
       const name = presetNameInp.value.trim();
-      if (!name) { status('⚠️ Введи имя пресета', '#ff8888'); return; }
-      if (BUILTIN_PRESETS[name]) { status('⚠️ Имя занято встроенным пресетом', '#ff8888'); return; }
+      if (!name) { status(L('⚠️ Введи имя пресета', '⚠️ Enter a preset name'), '#ff8888'); return; }
+      if (BUILTIN_PRESETS[name]) { status(L('⚠️ Имя занято встроенным пресетом', '⚠️ Name is reserved by a built-in preset'), '#ff8888'); return; }
       const customs = readCustomPresets();
       // v9.3: интервал форсажа — не часть пресета; в RUN он из v попадает
       // (остаётся настройкой), а в сам пресет не записывается
@@ -1773,14 +1854,14 @@
       presetNameInp.value = '';
       updateSavePresetBtn(); // имя очищено → кнопка гаснет
       fillRhythmInputs();
-      status('✅ Пресет «' + name + '» сохранён и включён', '#7CFC00');
+      status(L('✅ Пресет «' + name + '» сохранён и включён', '✅ Preset "' + name + '" saved and enabled'), '#7CFC00');
       renderStats();
     };
     rhythmForm.appendChild(savePresetBtn);
-    const delPresetBtn = mkBtn('Удалить свой пресет', '#c0392b');
+    const delPresetBtn = mkBtn(L('Удалить свой пресет', 'Delete Custom Preset'), '#c0392b');
     delPresetBtn.onclick = () => {
       const name = presetSel.value;
-      if (BUILTIN_PRESETS[name] || name === '(свои)') { status('⚠️ Встроенные пресеты не удаляются', '#ff8888'); return; }
+      if (BUILTIN_PRESETS[name] || name === '(свои)') { status(L('⚠️ Встроенные пресеты не удаляются', '⚠️ Built-in presets cannot be deleted'), '#ff8888'); return; }
       const customs = readCustomPresets();
       if (!customs[name]) return;
       delete customs[name];
@@ -1790,7 +1871,7 @@
         store.set('ck_run', JSON.stringify(RUN));
       }
       fillRhythmInputs();
-      status('🗑 Пресет «' + name + '» удалён', '#bbb');
+      status(L('🗑 Пресет «' + name + '» удалён', '🗑 Preset "' + name + '" deleted'), '#bbb');
     };
     rhythmForm.appendChild(delPresetBtn);
 
@@ -1799,8 +1880,8 @@
 
     // v9.2: в DOM формы уже вставлены под своими кнопками (аккордеон);
     // здесь только регистрируем их в списке «открыт один — прочие закрыты»
-    const boostInput = mkRhythmField(boostForm, 'Форсаж: интервал, сек (10–3600)', String(RUN.boostSec));
-    const saveBoostBtn = mkBtn('Сохранить интервал форсажа', '#27ae60');
+    const boostInput = mkRhythmField(boostForm, L('Форсаж: интервал, сек (10–3600)', 'Boost: interval, sec (10–3600)'), String(RUN.boostSec));
+    const saveBoostBtn = mkBtn(L('Сохранить интервал форсажа', 'Save Boost Interval'), '#27ae60');
     function boostDirty() {
       const sec = parseFloat(String(boostInput.value).replace(',', '.'));
       return !(isFinite(sec) && sec === RUN.boostSec);
@@ -1810,12 +1891,12 @@
     updateSaveBoostBtn();
     saveBoostBtn.onclick = () => {
       const sec = parseFloat(String(boostInput.value).replace(',', '.'));
-      if (!isFinite(sec) || sec < 10 || sec > 3600) { status('⚠️ Интервал форсажа: 10–3600 сек', '#ff8888'); return; }
+      if (!isFinite(sec) || sec < 10 || sec > 3600) { status(L('⚠️ Интервал форсажа: 10–3600 сек', '⚠️ Boost interval: 10–3600 sec'), '#ff8888'); return; }
       RUN.boostSec = sec;
       store.set('ck_run', JSON.stringify(RUN));
       updateSaveBoostBtn();
       renderState();
-      status('✅ Интервал форсажа сохранён', '#7CFC00');
+      status(L('✅ Интервал форсажа сохранён', '✅ Boost interval saved'), '#7CFC00');
     };
     boostForm.appendChild(saveBoostBtn);
 
@@ -1827,7 +1908,7 @@
       'display:none;margin:6px 0 0;padding:6px 8px;max-height:190px;overflow:auto;' +
       'background:#000;border-radius:6px;font:10px/1.6 ui-monospace,Menlo,monospace;' +
       'white-space:pre-wrap;color:#ccc';
-    const logBtn = mkBtn('Показать журнал', '#34495e');
+    const logBtn = mkBtn(L('Показать журнал', 'Show Log'), '#34495e');
     logBtn.onclick = () => {
       if (logBox.style.display === 'none') {
         // формат «ДД.ММ ЧЧ:ММ значок подпись: доп», напр.
@@ -1840,22 +1921,23 @@
             String(d.getMonth() + 1).padStart(2, '0') + ' ' + d.toTimeString().slice(0, 5);
         };
         const rows = readLog().slice(-25).reverse().map((e) => {
-          const [mark, label] = LOG_LABELS[e.s] || ['·', e.s];
+          const mark = (LOG_LABELS[e.s] && LOG_LABELS[e.s][0]) || '·';
+          const label = logLabelText(e.s);
           const extra = (e.x && e.s !== 'UNKNOWN') ? ': ' + e.x : '';
           return fmt(e.t) + ' ' + mark + ' ' + label + extra;
         });
-        logBox.textContent = rows.join('\n') || 'Журнал пуст';
+        logBox.textContent = rows.join('\n') || L('Журнал пуст', 'Log is empty');
         logBox.style.display = 'block';
-        logBtn.textContent = 'Скрыть журнал';
+        logBtn.textContent = L('Скрыть журнал', 'Hide Log');
       } else {
         logBox.style.display = 'none';
-        logBtn.textContent = 'Показать журнал';
+        logBtn.textContent = L('Показать журнал', 'Show Log');
       }
     };
     box.appendChild(logBtn);
     box.appendChild(logBox);
 
-    imHereBtn = mkBtn('Я тут — хватит звать', '#27ae60');
+    imHereBtn = mkBtn(L('Я тут — хватит звать', "I'm Here — Stop Calling"), '#27ae60');
     imHereBtn.style.display = 'none';
     imHereBtn.onclick = () => stopAlertLoop();
     box.appendChild(imHereBtn);
@@ -1865,7 +1947,10 @@
     // служебный — серый, как до 9.2)
     const hint = document.createElement('div');
     hint.style.cssText = 'margin-top:7px;font-size:11px;color:#999';
-    hint.textContent = 'Слоты/телефон заполнит само. SMS-код и Confirmar — за тобой. v' + SCRIPT_VER;
+    hint.textContent = L(
+      'Слоты/телефон заполнит само. SMS-код и Confirmar — за тобой. v' + SCRIPT_VER,
+      'Autofills slots & contact info. SMS code & Confirmar are up to you. v' + SCRIPT_VER
+    );
     box.appendChild(hint);
 
     // Небольшая постоянная ссылка: не собирает логи, не отправляет данные и
@@ -1874,7 +1959,7 @@
     supportLink.href = 'https://t.me/edlevina';
     supportLink.target = '_blank';
     supportLink.rel = 'noopener noreferrer';
-    supportLink.textContent = 'Написать в поддержку';
+    supportLink.textContent = L('Написать в поддержку', 'Contact Support (Telegram)');
     supportLink.style.cssText =
       'display:block;margin-top:4px;padding:3px 6px;border:1px solid #555;border-radius:5px;' +
       'color:#ddd;background:#1b1b1b;text-align:center;text-decoration:none;font-size:11px;line-height:1.25';
@@ -1932,12 +2017,12 @@
     for (const o of offered) {
       const up = deaccent(o.text);
       for (const k of selKeys) if (up.includes(deaccent(k))) {
-        return { opt: o, kind: 'выбранный', mine: true };
+        return { opt: o, kind: L('выбранный', 'selected'), mine: true };
       }
     }
     if (selKeys.length && !allowAny) return null;
     const any = offered[1] || offered[0] || null;
-    return any ? { opt: any, kind: offered[1] ? 'второй' : 'первый', mine: false } : null;
+    return any ? { opt: any, kind: offered[1] ? L('второй', 'second') : L('первый', 'first'), mine: false } : null;
   }
   function findTramite(keyword) {
     // v9.23: без диакритиков — как у офисов (findOption): услуга tarjetas
@@ -1993,6 +2078,7 @@
   function sendFoundSnapshot() {
     const s = buildFoundSnapshot();
     if (!s) return null;
+    if (!isMac) { downloadSnapshot(s); return s.name; }
     gmPost(CONFIG.alertServer + '/htmlsnap?name=' + encodeURIComponent(s.name), s.html, 8000)
       .then(() => { helperOk = true; })
       .catch(() => { helperOk = false; downloadSnapshot(s); }); // хелпер молчит — в Downloads
@@ -2014,7 +2100,7 @@
       if (fillStepQueue && fillStepQueue.length) return 0; // уже идёт — дальше по кнопке
       fillStepQueue = steps.slice();
       fillStepQueue.push(done);
-      status('👣 Пошаговое заполнение: ' + fillStepQueue.length + ' шагов — жми «Следующий шаг»', '#ffd27f');
+      status(L('👣 Пошаговое заполнение: ' + fillStepQueue.length + ' шагов — жми «Следующий шаг»', '👣 Step-by-step filling: ' + fillStepQueue.length + ' steps — click "Next Step"'), '#ffd27f');
       fillStepQueue.shift()();
       return 0;
     }
@@ -2128,33 +2214,33 @@
       snapOnce('unknown'); // страница целиком в снимки, не 500 символов
       recordResult('UNKNOWN', (document.body ? document.body.innerText : '').slice(0, 500));
       if (foundMode()) {
-        status('⚠️ ЦИТЫ ЕСТЬ, но страница незнакомая — доделай вручную!', '#ffcc66');
+        status(L('⚠️ ЦИТЫ ЕСТЬ, но страница незнакомая — доделай вручную!', '⚠️ SLOTS AVAILABLE, but unknown page — please finish manually!'), '#ffcc66');
         stopped = true;
         startAlertLoop('help');
         return;
       }
       if (onceOnly()) { // разовая проверка не просила ретраев незнакомых страниц
         SS.del('once');
-        checkerStop('⚠️ Незнакомая страница — разовая проверка остановлена');
+        checkerStop(L('⚠️ Незнакомая страница — разовая проверка остановлена', '⚠️ Unknown page — single check stopped'));
         return;
       }
       // сайт бывает флейковым: одиночный сбой — не повод бросать вахту
       const unknowns = getUnknowns() + 1;
       setUnknowns(unknowns);
       if (unknowns >= CONFIG.maxConsecutiveUnknown) {
-        checkerStop('⚠️ ' + unknowns + ' незнакомые страницы подряд — проверка остановлена', 'unknown');
+        checkerStop(L('⚠️ ' + unknowns + ' незнакомые страницы подряд — проверка остановлена', '⚠️ ' + unknowns + ' unknown pages in a row — checking stopped'), 'unknown');
       } else {
         stopped = true; // не трогать эту страницу, ждать перезагрузки по таймеру
         scheduleNext(CONFIG.unknownRetryMin * 60000,
-          'Незнакомая страница №' + unknowns + ', попробую снова');
-        fireAlert('error', 'Незнакомая страница №' + unknowns + ', повтор через ' + CONFIG.unknownRetryMin + ' мин');
+          L('Незнакомая страница №' + unknowns + ', попробую снова', 'Unknown page #' + unknowns + ', will retry'));
+        fireAlert('error', L('Незнакомая страница №' + unknowns + ', повтор через ' + CONFIG.unknownRetryMin + ' мин', 'Unknown page #' + unknowns + ', retry in ' + CONFIG.unknownRetryMin + ' min'));
       }
       return;
     }
     if (foundMode() && recognizedOnce &&
         (Date.now() - lastProgressAt) / 1000 > CONFIG.stallAfterSec &&
         lastKnownStep !== 'final') {
-      status('⚠️ ЦИТЫ ЕСТЬ, но автозаполнение застряло — доделай вручную!', '#ffcc66');
+      status(L('⚠️ ЦИТЫ ЕСТЬ, но автозаполнение застряло — доделай вручную!', '⚠️ SLOTS AVAILABLE, but autofill stalled — please finish manually!'), '#ffcc66');
       stopped = true;
       startAlertLoop('help');
     }
@@ -2177,7 +2263,7 @@
       noteStep('blocked');
       if (onceOnly()) { // разовая проверка упёрлась в блок — останавливаемся честно
         SS.del('once');
-        checkerStop('⛔️ Блокировка сайта — разовая проверка остановлена');
+        checkerStop(L('⛔️ Блокировка сайта — разовая проверка остановлена', '⛔️ Site blocked (WAF) — single check stopped'));
         return;
       }
       if (driving()) {
@@ -2191,15 +2277,15 @@
         bumpTodayBlocks(); // статистика «блоков за сегодня» (v9.1)
         recordHit(); // блокированная попытка тоже обращение к сайту — учитываем в окне
         if (blocks >= CONFIG.maxConsecutiveBlocks) {
-          checkerStop('⛔️ ' + blocks + ' блокировок подряд — проверка остановлена', 'stopped');
+          checkerStop(L('⛔️ ' + blocks + ' блокировок подряд — проверка остановлена', '⛔️ ' + blocks + ' blocks in a row — checking stopped'), 'stopped');
         } else {
           const idx = Math.min(blocks - 1, CONFIG.backoffMin.length - 1);
           scheduleNext(CONFIG.backoffMin[idx] * 60000,
-            'WAF-блок №' + blocks + ', пауза ' + CONFIG.backoffMin[idx] + ' мин');
-          fireAlert('error', 'WAF-блок №' + blocks + ', пауза ' + CONFIG.backoffMin[idx] + ' мин');
+            L('WAF-блок №' + blocks + ', пауза ' + CONFIG.backoffMin[idx] + ' мин', 'WAF block #' + blocks + ', pause ' + CONFIG.backoffMin[idx] + ' min'));
+          fireAlert('error', L('WAF-блок №' + blocks + ', пауза ' + CONFIG.backoffMin[idx] + ' мин', 'WAF block #' + blocks + ', pause ' + CONFIG.backoffMin[idx] + ' min'));
         }
       } else {
-        status('⛔️ Блокировка сайта (WAF). Жми «назад» и пробуй снова.', '#ff8888');
+        status(L('⛔️ Блокировка сайта (WAF). Жми «назад» и пробуй снова.', '⛔️ Site blocked (WAF). Go back and try again later.'), '#ff8888');
         stopped = true;
       }
       return;
@@ -2212,21 +2298,21 @@
       noteStep('caducada');
       if (!driving()) {
         // v8.1: проверка не идёт — не кликаем сами; раньше молча жал Aceptar
-        if (!recently('caducada', 5000)) status('Сессия протухла — нажми Aceptar сама (проверка выключена)', '#ffcc66');
+        if (!recently('caducada', 5000)) status(L('Сессия протухла — нажми Aceptar сама (проверка выключена)', 'Session expired — click Aceptar manually (checker is off)'), '#ffcc66');
         return;
       }
       const n = parseInt(SS.get('caducada') || '0', 10) + 1;
       SS.set('caducada', String(n));
       if (n > 3) {
         // рестарт не помогает — не зацикливаемся, пробуем позже
-        if (onceOnly()) { SS.del('once'); checkerStop('⚠️ Сессия не восстанавливается — разовая проверка остановлена'); return; }
+        if (onceOnly()) { SS.del('once'); checkerStop(L('⚠️ Сессия не восстанавливается — разовая проверка остановлена', '⚠️ Session recovery failed — single check stopped')); return; }
         recordResult('SESSION_LOOP');
-        scheduleNext(CONFIG.unknownRetryMin * 60000, 'Сессия не восстанавливается');
-        fireAlert('error', 'Сессия сайта не восстанавливается, повтор через ' + CONFIG.unknownRetryMin + ' мин');
+        scheduleNext(CONFIG.unknownRetryMin * 60000, L('Сессия не восстанавливается', 'Session recovery failed'));
+        fireAlert('error', L('Сессия сайта не восстанавливается, повтор через ' + CONFIG.unknownRetryMin + ' мин', 'Site session not recovering, retry in ' + CONFIG.unknownRetryMin + ' min'));
         return;
       }
       if (!recently('caducadaReload', 15000)) {
-        status('Сессия сайта протухла — начинаю проверку заново…');
+        status(L('Сессия сайта протухла — начинаю проверку заново…', 'Site session expired — restarting check…'));
         location.replace(SS.get('startUrl') || DEFAULT_START);
       }
       return;
@@ -2242,13 +2328,13 @@
         earlyText.includes('no estará disponible') ||
         earlyText.includes('no estara disponible'))) {
       noteStep('mantenimiento');
-      if (onceOnly()) { SS.del('once'); checkerStop('🛠️ Обслуживание сайта — разовая проверка остановлена, повторишь позже'); return; }
+      if (onceOnly()) { SS.del('once'); checkerStop(L('🛠️ Обслуживание сайта — разовая проверка остановлена, повторишь позже', '🛠️ Site maintenance — single check stopped, try later')); return; }
       resetTransient();
       claveWaitSince = 0; SS.del('clavePending'); // сбрасываем ложное «жду Cl@ve»
       recordResult('SITE_MAINTENANCE');
       recordHit();
       scheduleNext(CONFIG.unknownRetryMin * 60000,
-        'Обслуживание сайта, повтор через ' + CONFIG.unknownRetryMin + ' мин');
+        L('Обслуживание сайта, повтор через ' + CONFIG.unknownRetryMin + ' мин', 'Site maintenance, retry in ' + CONFIG.unknownRetryMin + ' min'));
       return;
     }
 
@@ -2262,19 +2348,19 @@
         earlyText.includes('intentelo de nuevo')) {
       noteStep('siteerror');
       if (!driving()) {
-        if (!recently('siteerr', 5000)) status('⚠️ Сайт: внутренняя ошибка — нажми Aceptar', '#ffcc66');
+        if (!recently('siteerr', 5000)) status(L('⚠️ Сайт: внутренняя ошибка — нажми Aceptar', '⚠️ Site internal error — click Aceptar'), '#ffcc66');
         return;
       }
       const n = parseInt(SS.get('siteerr') || '0', 10) + 1;
       SS.set('siteerr', String(n));
       if (n > 3) {
-        softFail('SITE_ERROR', 'Сайт: внутренняя ошибка не уходит');
+        softFail('SITE_ERROR', L('Сайт: внутренняя ошибка не уходит', 'Site internal error persists'));
         return;
       }
-      recordResult('SITE_ERROR', 'мгновенный рестарт №' + n);
-      if (n === 1) fireAlert('error', 'Сайт: внутренняя ошибка, перезапускаюсь');
+      recordResult('SITE_ERROR', L('мгновенный рестарт №' + n, 'instant restart #' + n));
+      if (n === 1) fireAlert('error', L('Сайт: внутренняя ошибка, перезапускаюсь', 'Site internal error, restarting'));
       if (!recently('siteerrReload', 15000)) {
-        status('Сайт: внутренняя ошибка — начинаю заново (№' + n + ')…');
+        status(L('Сайт: внутренняя ошибка — начинаю заново (№' + n + ')…', 'Site internal error — restarting (#' + n + ')…'));
         location.replace(SS.get('startUrl') || DEFAULT_START);
       }
       return;
@@ -2294,7 +2380,7 @@
           SS.del('clavePending');
           waiting = false; stopped = true;
           sendBeat(); // сторожу: выключились осознанно, не зови
-          status('✅ СИТА ПОДТВЕРЖДЕНА — всё готово! Номер записи (justificante) на странице', '#7CFC00');
+          status(L('✅ СИТА ПОДТВЕРЖДЕНА — всё готово! Номер записи (justificante) на странице', '✅ APPOINTMENT CONFIRMED — all done! Your confirmation (justificante) is on the page'), '#7CFC00');
           renderState();
         }
       }
@@ -2310,7 +2396,7 @@
       noteStep('province');
       claveWaitSince = 0; SS.del('clavePending'); // это не экран авторизации
       const pb = parseInt(SS.get('provBounce') || '0', 10);
-      if (pb > 4) { softFail('UNKNOWN', 'зациклился выбор провинции'); return; }
+      if (pb > 4) { softFail('UNKNOWN', L('зациклился выбор провинции', 'province selection loop')); return; }
       const sel = document.querySelector('select');
       if (sel && setSelectByText(sel, 'BARCELONA')) {
         if (recently('provinceSel', 60000)) {
@@ -2318,10 +2404,10 @@
           // чтобы сайт успел переварить выбор); счётчик отскоков +1 за попытку
           if (!recently('provinceGo', 8000)) {
             SS.set('provBounce', String(pb + 1));
-            status('Выбор провинции — жму Acepto и продолжаю…');
+            status(L('Выбор провинции — жму Acepto и продолжаю…', 'Province selection — clicking Acepto…'));
             clickBtn('aceptar', 'acepto');
           }
-        } else status('Экран выбора провинции — выбираю BARCELONA…');
+        } else status(L('Экран выбора провинции — выбираю BARCELONA…', 'Province selection screen — selecting BARCELONA…'));
         return;
       }
       // селекта нет или BARCELONA в нём нет — перезаход страницей (тоже отскок)
@@ -2341,7 +2427,7 @@
       // Автозаполнение глубоких экранов (NIE/телефон, если дошла сама) остаётся.
       // «Следующий шаг» (пошаговая отладка) по-прежнему работает по кнопке.
       if (!driving() && !foundMode() && !forcingStep) {
-        status('📡 Проверка выключена — страницу не трогаю', '#bbb');
+        status(L('📡 Проверка выключена — страницу не трогаю', '📡 Checker is OFF — leaving page untouched'), '#bbb');
         return;
       }
       noteStep('step1');
@@ -2366,12 +2452,12 @@
             fireAlert('cert');
           }
           stopped = true; // форму не трогаем — ждём человека, повтор по расписанию
-          scheduleNext(CONFIG.unknownRetryMin * 60000, 'Сертификат не подтверждён — повторю');
+          scheduleNext(CONFIG.unknownRetryMin * 60000, L('Сертификат не подтверждён — повторю', 'Certificate not confirmed — will retry'));
           return;
         }
-        status('⚠️ Первый экран не пропускает. Проверь данные/выбери вручную, я на паузе.', '#ffcc66');
+        status(L('⚠️ Первый экран не пропускает. Проверь данные/выбери вручную, я на паузе.', '⚠️ First screen is not advancing. Check details/select manually, paused.'), '#ffcc66');
         stopped = true;
-        if (driving()) checkerStop('⚠️ Первый экран зациклился — проверка остановлена', 'unknown');
+        if (driving()) checkerStop(L('⚠️ Первый экран зациклился — проверка остановлена', '⚠️ First screen looped — checking stopped'), 'unknown');
         return;
       }
       // v9.22: ровно один выбранный офис — ищем точечно (вердикт «нет сит»
@@ -2385,7 +2471,7 @@
         return;
       }
       if (sede.value !== wantOffice.value) {
-        status('Выбираю офис: ' + (selOffices.length === 1 ? selOffices[0].label : 'Cualquier oficina'));
+        status(L('Выбираю офис: ', 'Selecting office: ') + (selOffices.length === 1 ? selOffices[0].label : 'Cualquier oficina'));
         selectOption(sede, wantOffice);
         return; // следующий тик проверит список услуг
       }
@@ -2395,18 +2481,18 @@
         if (!tramMissingSince) { tramMissingSince = Date.now(); return; }
         if (Date.now() - tramMissingSince < 8000) return;
         // услуги нет и после ожидания — это ошибка, о которой надо знать
-        softFail('TRAMITE_MISSING', 'Услуга «' + currentTramite().key + '» не найдена в списке');
+        softFail('TRAMITE_MISSING', L('Услуга «' + currentTramite().key + '» не найдена в списке', 'Service "' + currentTramite().key + '" not found in dropdown'));
         return;
       }
       tramMissingSince = 0;
       if (tram.sel.value !== tram.opt.value) {
-        status('Выбираю услугу (' + currentTramite().key + ')…');
+        status(L('Выбираю услугу (', 'Selecting service (') + currentTramite().key + ')…');
         selectOption(tram.sel, tram.opt);
         return; // дать сайту «устаканиться» перед сабмитом
       }
       if (tram && tram.sel.value === tram.opt.value) {
         if (!recently('aceptar', 5000)) {
-          status('Жму «Aceptar»…');
+          status(L('Жму «Aceptar»…', 'Clicking "Aceptar"…'));
           noteP1Submit();
           clickBtn('#btnAceptar', 'aceptar');
         }
@@ -2440,7 +2526,7 @@
         // ждать обычный ритм — упустить окно возврата (интервал — в настройках ритма)
         const lostRetry = (RUN.lostRetryMinSec +
           Math.random() * (RUN.lostRetryMaxSec - RUN.lostRetryMinSec)) * 1000;
-        scheduleNext(lostRetry, 'Слоты сорвались (' + currentTramite().key + ') · 🔁 сразу перепроверяю');
+        scheduleNext(lostRetry, L('Слоты сорвались (' + currentTramite().key + ') · 🔁 сразу перепроверяю', 'Slots lost (' + currentTramite().key + ') · 🔁 retrying immediately'));
         return;
       }
       if (driving()) {
@@ -2454,7 +2540,7 @@
           const n = parseInt(SS.get('volverTries') || '0', 10) + 1;
           const btn = findVolverBtn();
           if (n <= 3 && btn) {
-            status('↩️ Volver не сработал, пробую снова (№' + n + ')…', '#ffd27f');
+            status(L('↩️ Volver не сработал, пробую снова (№' + n + ')…', '↩️ Volver did not navigate, retrying (#' + n + ')…'), '#ffd27f');
             SS.set('volverTries', String(n));
             SS.set('volverAt', String(Date.now()));
             btn.click();
@@ -2467,29 +2553,9 @@
         }
         resetTransient(); // гасим сиюминутные ошибки; счётчик WAF-блоков — по времени
         SS.del('clavePending'); // проверка завершена — флаг Cl@ve не переживает её (v7.27)
-        // Различаем настоящий «нет сит» и кодовый бот-блок. Настоящий — пишет
-        // «En breve, la Oficina pondrá…» без 4-значного кода; блок — с кодом перед
-        // «Cod. Oper.» (0017 = слишком быстрый ввод, сайт ложно пишет «нет сит»).
-        // scr — на каком из двух экранов: форма заявителя или вердикт с Salir
-        // (нужно бот-блоку: где показан код).
-        // v9.5: глубину «сит нет» меряем НЕ страницей вердикта, а фактом захода
-        // на экран заявителя (ШАГ 3 ставит deepFill): «после данных» = скрипт
-        // реально заполнял имя/NIE/страну и только потом получил «En breve»,
-        // «сразу» = вердикт до этого экрана. Старый маркер forma/Salir мерил
-        // страницу вердикта — поля формы могли остаться в её DOM, и «глубина»
-        // выходила завышенной (заметила Екатерина, 04.09).
-        // ↩ перед услугой = проверка началась кнопкой Volver (та же сессия);
-        // ↪ = хотели через Volver, но кнопки не нашли или клик не сработал
-        // (перезаход — в статистику гипотезы не идёт).
-        // v9.5: после глубины пишем и офис проверки (панель → officesShort());
-        // «провинция» = Cualquier oficina. Анализ «какие офисы давали сит нет»
-        // теперь читается из каждой записи, а не только из «старт» (заметила
-        // Екатерина, 04.09: в «старт» офис есть только с 03.09 и только один
-        // на серию). v9.22: выбранных офисов может быть несколько — тогда
-        // пишем «офисы N» (config виден в записи «старт»).
         const numM = document.body.innerText.match(/(\d{4})\s+Cod\.?\s*Oper/i);
-        const scr = document.querySelector('#txtIdCitado') ? 'форма' : 'Salir';
-        const depth = SS.get('deepFill') ? 'после данных' : 'сразу'; // v9.5
+        const scr = document.querySelector('#txtIdCitado') ? L('форма', 'form') : 'Salir';
+        const depth = SS.get('deepFill') ? L('после данных', 'after details') : L('сразу', 'immediate'); // v9.5
         const where = officesShort(); // v9.5→9.22: офис/офисы этой проверки
         const via = SS.get('viaVolver') ? '↩' : (SS.get('volverMiss') ? '↪' : '');
         SS.del('viaVolver'); SS.del('volverMiss');
@@ -2504,18 +2570,18 @@
         nextTramite(); // следующий цикл — следующая отмеченная услуга
         if (rhythmOn() || boostRun()) {
           const delay = jitteredDelayMs(); // выставляет SS.lastGap, если это шаг серии
-          const why = 'Сит нет (' + currentTramite().key + ')' +
-            (boostRun() ? ' · 🔥 форсаж' : SS.get('lastGap') ? ' · ' + SS.get('lastGap') : '');
+          const why = L('Сит нет (', 'No slots (') + currentTramite().key + ')' +
+            (boostRun() ? L(' · 🔥 форсаж', ' · 🔥 boost') : SS.get('lastGap') ? ' · ' + SS.get('lastGap') : '');
           scheduleNext(delay, why);
         } else {
           // v9.0: «Проверить сейчас» обещал ОДИН цикл — вердикт получен, машина молчит
           SS.del('once');
           waiting = false; stopped = true;
-          status('✅ Разовая проверка завершена: ' + (numM ? 'бот-блок ' + numM[1] : 'сит нет'), '#7CFC00');
+          status(L('✅ Разовая проверка завершена: ', '✅ Single check finished: ') + (numM ? L('бот-блок ', 'bot-block ') + numM[1] : L('сит нет', 'no slots')), '#7CFC00');
           renderState();
         }
       } else {
-        status('🔁 Сейчас сит нет — жми «Проверить сейчас» или запусти ритм', '#ffd27f');
+        status(L('🔁 Сейчас сит нет — жми «Проверить сейчас» или запусти ритм', '🔁 No slots right now — click "Check Now" or "Start Checking"'), '#ffd27f');
         stopped = true;
       }
       return;
@@ -2529,7 +2595,7 @@
       if (DATA.useClave) {
         noteStep('claveChoice');
         if (!recently('conClave', 5000)) {
-          status('🔐 Иду путём Cl@ve (лучший доступ)…', '#7CFC00');
+          status(L('🔐 Иду путём Cl@ve (лучший доступ)…', '🔐 Proceeding via Cl@ve…'), '#7CFC00');
           SS.set('clavePending', String(Date.now()));
           // Cl@ve уводит на clave.gob.es — sessionStorage там теряется.
           // Дублируем состояние в localStorage, чтобы возобновиться по возврату.
@@ -2546,44 +2612,31 @@
       } else {
         noteStep('sinClave');
         if (!recently('sinClave', 5000)) {
-          status('Иду без Cl@ve (быстрое заполнение)…');
+          status(L('Иду без Cl@ve (быстрое заполнение)…', 'Proceeding without Cl@ve (fast fill)…'));
           clickByText(/sin\s+cl@ve/i, null);
         }
       }
       return;
     }
 
-    // Режим Cl@ve: после «con Cl@ve» идёт экран авторизации (сертификат/Cl@ve).
-    // Если сертификат установлен — браузер проходит сам, и мы попадём на
-    // известный шаг. Если нужен человек — экран незнакомый: зовём голосом,
-    // авторизуется только человек, скрипт ждёт и подхватит следующий шаг.
-    // Переходные страницы Cl@ve живут секунды: пишем в журнал и зовём голосом
-    // только если ожидание НАСТОЯЩЕЕ (дольше 25 с), иначе это шум от редиректа.
     if (DATA.useClave && SS.get('clavePending')) {
-      // Меню действий (Solicitar Cita / Consultar / Anular / Salir) = авторизация
-      // УЖЕ пройдена (v7.27: раньше не распознавалось — чекер застревал тут с
-      // вечным голосом «авторизуйся», баг 02.09 13:23).
       const cpAt = parseInt(SS.get('clavePending') || '0', 10);
       const known = document.querySelector('#sede, #txtIdCitado, #txtTelefonoCitado, select#idSede') ||
         /no hay citas|no hay suficientes|libre|ocupado/i.test(document.body.innerText) ||
         [...document.querySelectorAll('input[type=submit],input[type=button],button,a')]
           .some((b) => /solicitar\s+cita|anular\s+cita/i.test(b.value || b.textContent || ''));
-      // Клапан протухания (v7.27): clavePending переживает перезагрузки
-      // (sessionStorage) и мог остаться с ПРОШЛОЙ проверки. Реальная
-      // авторизация живёт секунды-минуту; ждали 4+ минуты — флаг протух,
-      // снимаем и идём дальше по шагам, а не стоим вечно с голосом.
       if (!known && cpAt && Date.now() - cpAt > 4 * 60000) {
         claveWaitSince = 0;
         SS.del('clavePending');
         localStorage.removeItem('ck_claveResume');
-        status('🔐 Cl@ve-ожидание снято по таймауту — продолжаю обычные шаги…', '#ffd27f');
+        status(L('🔐 Cl@ve-ожидание снято по таймауту — продолжаю обычные шаги…', '🔐 Cl@ve wait timed out — continuing normal steps…'), '#ffd27f');
       } else if (!known) {
         noteStep('claveAuth'); // считаем известным шагом — не UNKNOWN
         if (!claveWaitSince) claveWaitSince = Date.now();
         if (Date.now() - claveWaitSince < 25000) {
-          status('🔐 Прохожу авторизацию Cl@ve…');
+          status(L('🔐 Прохожу авторизацию Cl@ve…', '🔐 Authenticating via Cl@ve…'));
         } else if (!recently('claveAuthCall', 90000)) {
-          status('🔐 Авторизуйся через Cl@ve (приложение/сертификат) — я жду и продолжу', '#ffcc66');
+          status(L('🔐 Авторизуйся через Cl@ve (приложение/сертификат) — я жду и продолжу', '🔐 Please authenticate via Cl@ve (app/certificate) — waiting to continue'), '#ffcc66');
           recordResult('CLAVE_AUTH_WAIT');
           fireAlert('clave'); // отдельное сообщение, НЕ «ситы есть»
         }
@@ -2600,7 +2653,7 @@
         [...document.querySelectorAll('input,button,a')].some((b) => /entrar/i.test(b.value || b.textContent || ''))) {
       noteStep('step2');
       if (!recently('entrar', 5000)) {
-        status('Перехожу дальше (Entrar)…');
+        status(L('Перехожу дальше (Entrar)…', 'Proceeding (Entrar)…'));
         clickBtn('#btnEntrar', 'entrar');
       }
       return;
@@ -2611,58 +2664,33 @@
     if (idField) {
       noteStep('step3');
       SS.del('certLoops'); // дошли до заявителя — авторизация прошла, cert-цикл закончен (v9.25.1)
-      SS.set('deepFill', '1'); // v9.5: дошли до экрана заявителя (имя/NIE/страна,
-                               // заполняется после Cl@ve) — вердикт будет «после
-                               // данных». Ставим по факту экрана: чекер идёт или
-                               // нет, данные готовы или нет — экран достигнут.
+      SS.set('deepFill', '1'); // v9.5: дошли до экрана заявителя
       if (!dataReady()) {
-        status('⚙️ Заполни данные (кнопка «👤 Изменить мои данные») — без них дальше нельзя', '#ffcc66');
+        status(L('⚙️ Заполни данные (кнопка «👤 Изменить мои данные») — без них дальше нельзя', '⚙️ Fill in your details ("Edit My Personal Details") — required to proceed'), '#ffcc66');
         stopped = true;
-        if (driving()) checkerStop('⚙️ Нет личных данных — проверка остановлена');
+        if (driving()) checkerStop(L('⚙️ Нет личных данных — проверка остановлена', '⚙️ Missing personal details — checking stopped'));
         return;
       }
-      // guard длиннее всего человеческого заполнения (~6–9 с), иначе tick через
-      // 5 с повторно войдёт и начнёт печатать заново поверх недозаполненного.
-      // v9.25.1: пошаговому режиму guard не нужен — там шаги идут по кнопке
       if (stepMode() || !recently('fillpersonal', 20000)) {
-        // Как делает человек: жмём «Copiar a datos solicitante» — сайт сам
-        // подставляет NIE/имя из личности Cl@ve, печатать ничего не надо (это и
-        // защищает от кода 0017 «слишком быстрый ввод»). Кнопка НЕ подставляет
-        // страну — её выбираем сами. Что кнопка не заполнила (или её нет —
-        // анонимный режим) — дописываем как раньше, по-человечески с паузами.
-        // Запись ДРУГОМУ человеку (copyFromClave=false, PR #2): «Copiar» не жмём —
-        // он подставил бы владельца Cl@ve — и имя/NIE/год пишем из «Моих данных».
         const otherApplicant = DATA.useClave && DATA.copyFromClave === false;
         const copyBtn = otherApplicant ? null
           : [...document.querySelectorAll('input[type=button],input[type=submit],button,a')]
             .find((b) => /copiar\s+a\s+datos|copiar.*solicitante/i.test(b.value || b.textContent || ''));
-        status(otherApplicant ? 'Вписываю заявителя из моих данных…'
-          : copyBtn ? 'Копирую данные из Cl@ve (как человек)…'
-          : 'Вписываю данные заявителя…');
+        status(otherApplicant ? L('Вписываю заявителя из моих данных…', 'Filling applicant details from My Personal Details…')
+          : copyBtn ? L('Копирую данные из Cl@ve (как человек)…', 'Copying details from Cl@ve…')
+          : L('Вписываю данные заявителя…', 'Filling applicant details…'));
         const radio = DATA.docType === 'PASSPORT'
           ? document.querySelector('#rdbTipoDocPas, input[name="rdbTipoDoc"][value*="PAS"]')
           : document.querySelector('#rdbTipoDocNie, input[name="rdbTipoDoc"][value*="N.I.E"]');
         const yr = document.querySelector('#txtAnnoCitado');
         const pais = document.querySelector('#txtPaisNac');
-        // страховка: дописываем только то, что осталось пустым после «Copiar»;
-        // «другому человеку» — пишем из «Моих данных» поверх, чего бы ни стояло
         const fillRemainder = () => {
-          // v9.23.3 (репорт Миланы, 09.10): лейбл/валидатор поля номера сайт
-          // обновляет только на настоящий клик по радиокнопке. Установка
-          // checked + синтетический change (до 9.23.3) оставляла поле в
-          // формате «* N.I.E.» (требует X/T/Z) — паспортный номер сайт не
-          // принимал; руками лечилось переключением DNI → Pasaporte.
-          // Настоящий .click() прогоняет сайтный обработчик сам.
           if (radio && !radio.checked) radio.click();
           if (otherApplicant || !idField.value) fill(idField, DATA.docNumber);
           const nm = document.querySelector('#txtDesCitado');
           if (nm && (otherApplicant || !nm.value)) fill(nm, DATA.fullName);
           if (yr && (otherApplicant || !yr.value) && DATA.birthYear) fill(yr, DATA.birthYear);
         };
-        // v7.31: после «Copiar» печати почти нет (радиокнопка, иногда год,
-        // страна) — остаток и страна ОДНИМ шагом, паузы personalFill*:
-        // весь экран ~3 с вместо ~6 (именно на нём ситы сгорают чаще всего).
-        // Анонимно «Copiar» нет — печатаем сами, шаги раздельные, как раньше.
         const steps = [];
         if (copyBtn) {
           steps.push(() => copyBtn.click());
@@ -2672,7 +2700,7 @@
           if (pais) steps.push(() => setSelectByText(pais, DATA.country));
         }
         fillHumanly(steps, () => {
-          status('Отправляю данные…');
+          status(L('Отправляю данные…', 'Submitting applicant details…'));
           clickBtn('#btnEnviar', 'aceptar', 'solicitar');
         }, CONFIG.personalFillMinSec, CONFIG.personalFillMaxSec);
       }
@@ -2680,14 +2708,13 @@
     }
 
     // ШАГ 3.4 — меню действий после личных данных → «Solicitar Cita»
-    // (кнопки: Solicitar Cita / Consultar Citas … / Anular Cita / Salir)
     const solicitarBtn = [...document.querySelectorAll('input[type=submit],input[type=button],button,a')]
       .find((b) => /solicitar\s+cita/i.test(b.value || b.textContent || ''));
     if (solicitarBtn) {
       noteStep('actions');
       SS.del('certLoops'); // меню после авторизации — cert-цикл закончен (v9.25.1)
       if (!recently('solicitar', 5000)) {
-        status('Запрашиваю ситы (Solicitar Cita)…');
+        status(L('Запрашиваю ситы (Solicitar Cita)…', 'Requesting appointment (Solicitar Cita)…'));
         solicitarBtn.click();
       }
       return;
@@ -2698,28 +2725,17 @@
     if (idSede) {
       noteStep('office2');
       if (!recently('office2', 5000)) {
-        // Опции без value — placeholder вроде «Selecciona oficina», пропускаем.
-        // v9.22: сначала фильтр выбранных офисов (панель «Офисы, которые
-        // проверяем»), и только потом markFound:
-        //  - среди предложенных есть наш — markFound и берём его;
-        //  - наших нет, но включена галка «брать любой» (или выбрана вся
-        //    провинция) — markFound и берём ВТОРОЙ офис: за первый конкурируют
-        //    все, кто ловит ситы; второго нет — первый;
-        //  - наших нет, «любой» запрещён — чужие = «сит нет»: БЕЗ markFound,
-        //    снимка и зова завершаем заход как обычный отрицательный вердикт,
-        //    цикл продолжается (блок зеркалит «no hay citas» ниже).
         const opts = [...idSede.options].filter((o) => o.value);
         if (opts.length) {
           const selKeys = selectedOffices().map((o) => o.key);
           const pick = pickOffice(opts, selKeys, officeAnyEffective());
           if (!pick) {
             if (stepMode()) {
-              status('⏸️ Ситы есть, но не в моих офисах — шаг не продолжаю', '#ffd27f');
+              status(L('⏸️ Ситы есть, но не в моих офисах — шаг не продолжаю', '⏸️ Slots exist, but not in your selected offices — pausing step'), '#ffd27f');
               return;
             }
-            status('⏸️ Ситы есть, но не в моих офисах (предложено ' + opts.length +
-              ') — продолжаю проверку', '#ffd27f');
-            recordResult('OFFICE_NOTOURS', opts.length + ' чужих');
+            status(L('⏸️ Ситы есть, но не в моих офисах (предложено ' + opts.length + ') — продолжаю проверку', '⏸️ Slots exist, but not in your selected offices (' + opts.length + ' offered) — continuing search'), '#ffd27f');
+            recordResult('OFFICE_NOTOURS', opts.length + L(' чужих', ' other'));
             recordHit();
             SS.del('deepFill'); // вердикт записан — глубина израсходована
             SS.del('clavePending'); // проверка завершена — флаг Cl@ve не переживает её
@@ -2727,42 +2743,34 @@
             nextTramite(); // следующий цикл — следующая отмеченная услуга
             if (rhythmOn() || boostRun()) {
               scheduleNext(jitteredDelayMs(),
-                'Не в моих офисах (' + currentTramite().key + ')');
+                L('Не в моих офисах (', 'Not in selected offices (') + currentTramite().key + ')');
             } else {
               // разовая проверка дошла до вердикта — машина замолкает
               SS.del('once');
               waiting = false; stopped = true;
-              status('✅ Разовая проверка завершена: ситы есть, но не в моих офисах', '#7CFC00');
+              status(L('✅ Разовая проверка завершена: ситы есть, но не в моих офисах', '✅ Single check finished: slots exist, but not in your selected offices'), '#7CFC00');
               renderState();
             }
             return;
           }
           markFound();
-          status('🎉 Ситы есть! Беру ' + (pick.mine ? 'выбранный' :
-            pick.kind + (selKeys.length ? ' (не из выбранных)' : '')) +
-            ' офис из ' + opts.length + '…', '#7CFC00');
+          status(L('🎉 Ситы есть! Беру ', '🎉 Slots found! Picking ') + (pick.mine ? L('выбранный', 'selected') :
+            pick.kind + (selKeys.length ? L(' (не из выбранных)', ' (any-office fallback)') : '')) +
+            L(' офис из ', ' office out of ') + opts.length + '…', '#7CFC00');
           selectOption(idSede, pick.opt);
           setTimeout(() => { if (!stepMode()) clickBtn('#btnSiguiente', 'siguiente'); }, 700);
         }
-        // opts пуст: список офисов ещё не загрузился — не вердиктим и не кликаем
-        // вслепую (в 9.21 и раньше сюда жался Siguiente по placeholder), ждём следующие
-        // тики; зависание разберёт watchdog
       }
       return;
     }
 
     // ШАГ 3.8 — новый экран слотов: календарь LIBRE/OCUPADO + КАПЧА
-    // (вёрстка июля 2026). Капчу решает только человек — зовём немедленно,
-    // а всё, что можно, делаем сами: выбираем первый LIBRE, фокусируем поле.
     const bodyLow = document.body.innerText.toLowerCase();
     if (bodyLow.includes('captcha') &&
         (bodyLow.includes('citas disponibles') || /\blibre\b/i.test(document.body.innerText))) {
       noteStep('slotsCaptcha');
       markFound();
-      // один раз на загрузку страницы: дальше человек вводит капчу, не мешаем
       if (!recently('slotsCaptcha', 600000)) {
-        // все LIBRE-даты: подсветить зелёной рамкой (выбирать глазами быстрее),
-        // первую нажать самому; список доступных дат — в снимок экрана
         try {
           let first = null;
           const dates = [];
@@ -2782,7 +2790,7 @@
           .find((i) => /texto|captcha|codigo/i.test(
             (i.placeholder || '') + ' ' + (i.id || '') + ' ' + (i.name || '')));
         if (cap) { cap.focus(); cap.style.outline = '3px solid #e74c3c'; }
-        status('🎉 СИТЫ НА ЭКРАНЕ! Введи капчу и жми дальше!', '#7CFC00');
+        status(L('🎉 СИТЫ НА ЭКРАНЕ! Введи капчу и жми дальше!', '🎉 SLOTS ON SCREEN! Enter the captcha and click continue!'), '#7CFC00');
         recordResult('SLOTS_CAPTCHA', currentTramite().key);
         startAlertLoop('help');
       }
@@ -2797,7 +2805,7 @@
       if (!recently('slot', 5000)) {
         const lbl = slot.closest('label, tr, td');
         const st = ((lbl ? lbl.innerText : '') || '').trim().replace(/\s+/g, ' ').slice(0, 120);
-        status('🎉 Есть слот! Выбираю первый…', '#7CFC00');
+        status(L('🎉 Есть слот! Выбираю первый…', '🎉 Slot available! Selecting the first one…'), '#7CFC00');
         snapOnce('slot', st); // выбранный слот — в снимки (что именно взяли)
         slot.checked = true;
         slot.dispatchEvent(new Event('change', { bubbles: true }));
@@ -2810,21 +2818,15 @@
     const tel = document.querySelector('#txtTelefonoCitado');
     if (tel) {
       noteStep('step5');
-      // guard длиннее всего заполнения (~6–9 с), иначе tick войдёт повторно;
-      // v9.25.1: пошаговому режиму guard не нужен — там шаги идут по кнопке
       if (stepMode() || !recently('contact', 20000)) {
-        // по одному полю с паузами: мгновенное заполнение телефона и двух email
-        // за <1 с давало код 0018 «слишком быстрый ввод» и теряло уже пойманную ситу.
-        // Паузы для этого экрана свои (contactFill*, v7.30): быстрее формы
-        // заявителя — слоты уже почти в руках, каждая секунда на счету
         snapOnce('telefono');
-        status('Вписываю телефон и email по-человечески…');
+        status(L('Вписываю телефон и email по-человечески…', 'Filling phone and email at human pace…'));
         fillHumanly([
           () => fill(tel, DATA.phone),
           () => fill(document.querySelector('#emailUNO'), DATA.email),
           () => fill(document.querySelector('#emailDOS'), DATA.email),
         ], () => {
-          status('Отправляю контакты…');
+          status(L('Отправляю контакты…', 'Submitting contact info…'));
           clickBtn('#btnSiguiente', 'siguiente');
         }, CONFIG.contactFillMinSec, CONFIG.contactFillMaxSec);
       }
@@ -2843,8 +2845,8 @@
         chk.checked = true;
         chk.dispatchEvent(new Event('change', { bubbles: true }));
       }
-      if (smsField) status('✅ ВВЕДИ SMS-КОД И НАЖМИ CONFIRMAR', '#7CFC00');
-      else status('✅ Всё заполнено — проверь экран и нажми Confirmar', '#7CFC00');
+      if (smsField) status(L('✅ ВВЕДИ SMS-КОД И НАЖМИ CONFIRMAR', '✅ ENTER SMS CODE AND CLICK CONFIRMAR'), '#7CFC00');
+      else status(L('✅ Всё заполнено — проверь экран и нажми Confirmar', '✅ All filled — review the page and click Confirmar'), '#7CFC00');
       if (foundMode() && !alertTimer && !recently('finalalert', 60000)) {
         recordResult('SLOTS_FOUND_FINAL');
         startAlertLoop('found'); // голос зовёт, пока не нажато «Я тут»
@@ -2862,7 +2864,7 @@
       snapOnce('found', currentTramite().key); // первый экран находки — в снимки
       // снимок страницы с ситами (раз на находку) — доказательство, что это ситы
       const snap = CONFIG.saveFoundHtml ? sendFoundSnapshot() : null;
-      recordResult('SLOTS_FOUND', currentTramite().key + (snap ? ' · снимок: ' + snap : ''));
+      recordResult('SLOTS_FOUND', currentTramite().key + (snap ? L(' · снимок: ', ' · snap: ') + snap : ''));
     }
   }
 
@@ -2909,31 +2911,24 @@
   }
   function clavePlatformFlow() {
     if (!DATA.useClave) return; // не наш случай — молчим
-    if (!DATA.claveCert) { claveBadge('выбери способ входа вручную', '#ffd27f'); return; }
-    // антидребезг: не жать чаще раза в 15 с (чтобы не зациклить при таймауте
-    // сервера), но и не «один раз навсегда» — если вернулись на выбор, поможем
-    // снова. v9.25.1: дребезг считаем только ВНУТРИ одного захода (clicked
-    // новее flow — ререндеры страницы платформы). Новый заход с сайта несёт
-    // свежий ck_claveFlow — кликаем сразу: раньше при быстром возврате-повторе
-    // 15-секундный антидребезг глотал клик, авторизация не начиналась и цикл
-    // «первый экран → Cl@ve → откат» самоподдерживался.
+    if (!DATA.claveCert) { claveBadge(L('выбери способ входа вручную', 'select login method manually'), '#ffd27f'); return; }
     const flowAt = parseInt(store.get('ck_claveFlow', '0'), 10);
     const last = parseInt(store.get('ck_claveClicked', '0'), 10);
     if (last > flowAt && Date.now() - last < 15000) {
-      claveBadge('только что нажала eIdentifier, жду…', '#7CFC00');
+      claveBadge(L('только что нажала eIdentifier, жду…', 'just clicked eIdentifier, waiting…'), '#7CFC00');
       return;
     }
-    claveBadge('ищу кнопку eIdentifier…', '#ffd27f');
+    claveBadge(L('ищу кнопку eIdentifier…', 'looking for eIdentifier button…'), '#ffd27f');
     let tries = 0;
     const timer = setInterval(() => {
       tries++;
       // «Access eIdentifier» / «Acceder eIdentificador» — сертификатный путь
       if (clickClaveTile(/eidentifier|eidentificador|certificad/i)) {
         store.set('ck_claveClicked', String(Date.now()));
-        claveBadge('нажала eIdentifier ✓ — Chrome подтянет сертификат', '#7CFC00');
+        claveBadge(L('нажала eIdentifier ✓ — Chrome подтянет сертификат', 'clicked eIdentifier ✓ — Chrome will select certificate'), '#7CFC00');
         clearInterval(timer);
       } else if (tries > 40) { // ~20 секунд ожидания медленной страницы
-        claveBadge('кнопку eIdentifier не нашла — выбери вручную', '#ff8888');
+        claveBadge(L('кнопку eIdentifier не нашла — выбери вручную', 'eIdentifier button not found — please select manually'), '#ff8888');
         clearInterval(timer);
       }
     }, 500);
@@ -2981,7 +2976,7 @@
       if (nextAt && Date.now() >= nextAt && !recently('wakeReload', 5000)) {
         SS.del('nextAt'); waiting = false;
         recordResult('RESUMED'); // видно в журнале, что вкладку морозило
-        status('🔄 Вкладка ожила — начинаю следующую проверку…');
+        status(L('🔄 Вкладка ожила — начинаю следующую проверку…', '🔄 Tab woke up — starting next check…'));
         startNewCheck();
       } else {
         heartbeat();
