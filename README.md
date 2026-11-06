@@ -1,5 +1,7 @@
 # Cita Por Favor
 
+> 🌐 **English documentation**: [README_EN.md](README_EN.md)
+
 Локальный помощник для проверки доступности cita на toma de huellas,
 expedición de tarjetas, recogida de tarjeta (получение готовой TIE)
 и asignación de NIE (первичное назначение номера)
